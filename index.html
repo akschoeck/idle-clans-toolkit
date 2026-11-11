@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idle Clans Toolkit</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">Idle Clans Toolkit</div>
+  <form id="userForm" class="userbar" autocomplete="off">
+    <span id="userShown" class="user-shown" hidden></span>
+    <input id="userInput" type="text" placeholder="In-game username" maxlength="40" aria-label="In-game username">
+    <button id="userSave" type="submit">Load</button>
+    <button id="userChange" type="button" class="ghost" hidden>Change</button>
+    <button id="refreshBtn" type="button" class="ghost" title="Re-fetch prices and profile">Refresh</button>
+  </form>
+</header>
+<nav id="tabs" class="tabs" role="tablist"></nav>
+<div id="status" class="status" role="status" aria-live="polite"></div>
+<main id="view"></main>
+<dialog id="dialog"><div id="dialogBody"></div></dialog>
+<footer class="foot">
+  Data from the public Idle Clans API (query.idleclans.com). Unofficial fan tool. Prices are cached for 5 minutes.
+</footer>
+<script src="js/core.js"></script>
+<script src="js/data.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/view-home.js"></script>
+<script src="js/view-money.js"></script>
+<script src="js/view-xp.js"></script>
+<script src="js/view-market.js"></script>
+<script src="js/view-combat.js"></script>
+<script src="js/view-gear.js"></script>
+<script src="js/view-clan.js"></script>
+<script src="js/view-settings.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

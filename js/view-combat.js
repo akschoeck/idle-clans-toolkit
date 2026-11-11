@@ -1,0 +1,61 @@
+// Combat: expected loot value per kill for every monster and boss.
+IC.views.combat = {
+  label: 'Combat',
+  blurb: 'Expected gold and loot value per kill for every monster and boss, with full drop tables.',
+  state: { zone: 'all' },
+  render(el) {
+    const st = this.state, g = IC.data.game;
+    const zones = [...new Set(g.monsters.map((m) => m.zone).filter(Boolean))];
+    el.innerHTML = `<h2>Loot value per kill</h2>
+      <p class="muted">Each drop's chance × average quantity × sale value. The API has no combat simulator, so enter your own average kill time to get gold per hour. Boss rows subtract the price of the key.</p>
+      <div class="controls">
+        <label>Zone <select id="cZone"><option value="all">All zones</option>${zones.map((z) => `<option value="${esc(z)}">${esc(IC.pretty(z))}</option>`).join('')}</select></label>
+        <label>My average kill time <input type="number" id="cKill" min="1" step="1" value="${IC.settings.killSeconds}"> seconds</label>
+        ${IC.ui.sellModeSelect()}
+      </div><div id="cT"></div>
+      <p class="muted small">Gold per hour adds the ${fmt.dec(g.settings.respawnMs / 1000, 2)}s respawn to your kill time. Rare drops dominate some rows, so hourly figures are long-run averages. Click a monster for its full drop table.</p>`;
+    el.querySelector('#cZone').value = st.zone;
+    const draw = () => {
+      const cycle = (IC.settings.killSeconds || 12) + g.settings.respawnMs / 1000;
+      const rows = g.monsters.filter((m) => st.zone === 'all' || m.zone === st.zone).map((m) => {
+        const v = IC.lootValue(m.loot);
+        const key = m.keyId != null ? IC.buyCost(m.keyId) || 0 : 0;
+        const top = m.loot.filter((l) => l.id !== IC.GOLD).map((l) => ({ l, ev: (IC.sellValue(l.id) || { value: 0 }).value * l.chance * l.avg })).sort((a, b) => b.ev - a.ev)[0];
+        return { m, v, key, net: v.total - key, perHr: (v.total - key) * (3600 / cycle), top };
+      });
+      IC.ui.table(el.querySelector('#cT'), {
+        rows, sort: 6, limit: 80,
+        cols: [
+          { label: 'Monster', val: (r) => IC.pretty(r.m.key), html: (r) => `<button class="link" data-mon="${r.m.key}">${esc(IC.pretty(r.m.key))}</button>${r.m.boss ? '<span class="tag">boss</span>' : ''}` },
+          { label: 'Zone', val: (r) => IC.pretty(r.m.zone) },
+          { label: 'HP', num: true, val: (r) => r.m.hp, html: (r) => fmt.int(r.m.hp) },
+          { label: 'Gold/kill', num: true, val: (r) => r.v.gold, html: (r) => fmt.dec(r.v.gold, 1) },
+          { label: 'Items/kill', num: true, val: (r) => r.v.items, html: (r) => fmt.short(r.v.items) },
+          { label: 'Net/kill', num: true, val: (r) => r.net, html: (r) => `<b class="${r.net >= 0 ? 'good' : 'bad'}">${fmt.short(r.net)}</b>${r.key ? `<div class="muted small">key ${fmt.short(r.key)}</div>` : ''}` },
+          { label: 'Gold/hr', num: true, val: (r) => r.perHr, html: (r) => `<span class="${r.perHr >= 0 ? 'good' : 'bad'}">${fmt.short(r.perHr)}</span>` },
+          { label: 'Most valuable drop', val: (r) => (r.top ? r.top.ev : null), html: (r) => (r.top && r.top.ev > 0 ? `${IC.ui.itemLink(r.top.l.id)} <span class="muted">(${fmt.pct(r.top.l.chance, r.top.l.chance < 0.01 ? 2 : 1)})</span>` : '<span class="muted">–</span>') },
+        ],
+      });
+    };
+    el.querySelector('#cZone').onchange = (e) => { st.zone = e.target.value; draw(); };
+    el.querySelector('#cKill').onchange = (e) => { IC.settings.killSeconds = Math.max(1, +e.target.value || 12); IC.saveSettings(); draw(); };
+    el.querySelector('#cT').addEventListener('click', (e) => { const b = e.target.closest('[data-mon]'); if (b) this.lootDialog(b.dataset.mon); });
+    IC.ui.bindSellMode(el, draw);
+    draw();
+  },
+  lootDialog(key) {
+    const m = IC.data.game.monsters.find((x) => x.key === key); if (!m) return;
+    const rows = m.loot.map((l) => { const v = l.id === IC.GOLD ? { value: 1 } : IC.sellValue(l.id); return { l, each: v ? v.value : null, ev: v ? v.value * l.chance * l.avg : null }; });
+    const body = IC.ui.dialog(`<div class="dlg-head"><div><h2>${esc(IC.pretty(m.key))}</h2><div class="muted small">${esc(IC.pretty(m.zone))} · ${fmt.int(m.hp)} HP${m.keyId != null ? ' · needs ' + esc(IC.itemName(m.keyId)) : ''}</div></div><button class="ghost" data-close>Close</button></div><div id="lootT"></div>`);
+    IC.ui.table(body.querySelector('#lootT'), {
+      rows, sort: 4, limit: 100,
+      cols: [
+        { label: 'Drop', val: (r) => IC.itemName(r.l.id), html: (r) => IC.ui.itemLink(r.l.id) },
+        { label: 'Chance', num: true, val: (r) => r.l.chance, html: (r) => fmt.pct(r.l.chance, r.l.chance < 0.01 ? 2 : 1) },
+        { label: 'Quantity', num: true, val: (r) => r.l.avg, html: (r) => (r.l.min === r.l.max ? fmt.int(r.l.min) : `${fmt.int(r.l.min)}–${fmt.int(r.l.max)}`) },
+        { label: 'Value each', num: true, val: (r) => r.each },
+        { label: 'Value/kill', num: true, val: (r) => r.ev, html: (r) => fmt.dec(r.ev, 1) },
+      ],
+    });
+  },
+};
