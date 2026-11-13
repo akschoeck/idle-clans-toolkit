@@ -115,6 +115,36 @@ IC.views.dps = {
         ${row('Archery / Magic', `${m.s.arch} / ${m.s.mag}`)}
       </tbody></table></div></div>`;
   },
+  // Top 10 enemies by XP and by gold per hour for the gear currently set on this tab.
+  bestHtml() {
+    const st = this.state, foods = this.foods();
+    const food = foods.find((f) => f.id === IC.store.get('dpsFood', null)) || foods[Math.floor(foods.length / 2)];
+    const foodPrice = food && !food.noTrade ? IC.buyCost(food.id) : null;
+    const maxLvl = +st.topMax || Infinity, ext = (IC.levels && IC.levels.exterminating) || 1;
+    let hidden = 0;
+    const rows = [];
+    for (const m of IC.data.game.monsters) {
+      if (m.lvl > maxLvl) continue;
+      const special = m.boss || m.keyId != null || m.zone === 'invocation';
+      const locked = m.zone === 'exterminating' && m.req > ext;
+      if ((special || locked) && !st.topAll) { hidden++; continue; }
+      const r = IC.combat.calc(st.gear, IC.levels, m);
+      if (!(r.kills > 0)) continue;
+      const foodCost = food && foodPrice != null ? (r.takenHr / food.heal) * foodPrice : 0;
+      rows.push({ m, r, xp: r.dmgHr * 5, gold: this.loot(m, r).marketHr - foodCost, foodHr: food ? r.takenHr / food.heal : null, locked });
+    }
+    const list = (key, label, value) => {
+      const top = rows.slice().sort((a, b) => b[key] - a[key]).slice(0, 10);
+      return `<div><h4 style="margin:0 0 6px">${label}</h4><div class="tablewrap"><table><thead><tr><th>#</th><th>Enemy</th><th class="num">Lvl</th><th class="num">${value}</th><th class="num">Kills/hr</th><th class="num" title="Pieces of the selected food eaten per hour">Food/hr</th></tr></thead><tbody>
+        ${top.map((x, i) => `<tr><td class="muted">${i + 1}</td><td><button class="link" data-goto-mon="${esc(x.m.key)}" title="Load this enemy above">${esc(IC.pretty(x.m.key))}</button>${x.m.key === this.monster().key ? '<span class="tag good">selected</span>' : ''}${x.locked ? `<span class="tag warn">Exterminating ${x.m.req}</span>` : ''}</td><td class="num">${x.m.lvl}</td><td class="num"><b>${fmt.int(x[key])}</b></td><td class="num">${fmt.int(Math.floor(x.r.kills))}</td><td class="num">${x.foodHr == null ? '–' : fmt.dec(x.foodHr, x.foodHr < 10 ? 1 : 0)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No enemies match.</td></tr>'}
+      </tbody></table></div></div>`;
+    };
+    return `<div class="card"><h3>Best enemies with this gear</h3>
+      <div class="controls"><label title="Hide enemies above this level">Max level <input type="number" id="dTopMax" min="1" placeholder="any" value="${esc(st.topMax || '')}"></label>
+        <label><input type="checkbox" id="dTopAll" ${st.topAll ? 'checked' : ''}> Include bosses, Invocation enemies and Exterminating enemies I have not unlocked</label></div>
+      <div class="cols">${list('xp', 'Top 10 by XP per hour', 'XP/hr')}${list('gold', 'Top 10 by gold per hour', 'Gold/hr')}</div>
+      <p class="muted small">Recalculated whenever you change a piece of gear. XP is total combat plus Health XP (5 per damage). Gold is market loot at the sell price chosen above${food && foodPrice != null ? `, less the cost of ${esc(IC.itemName(food.id))} eaten` : ''}. Click an enemy to load it above.${hidden && !st.topAll ? ` ${hidden} bosses, Invocation and locked Exterminating enemies are hidden.` : ''} It does not check whether you can survive the fight: watch the Food/hr column and the enemy's max hit.</p></div>`;
+  },
   foods() { return IC.data.game.items.filter((i) => i && i.heal > 0 && !i.dead).sort((a, b) => a.heal - b.heal); },
   foodHtml(r, m) {
     const foods = this.foods(); if (!foods.length) return '';
@@ -192,8 +222,15 @@ IC.views.dps = {
       <div><b>Magic</b> Strength: ${r.tot.mStr} | Accuracy: ${r.tot.mAcc} | Defence: ${r.tot.mDef}</div></div>`;
 
     const out = el.querySelector('#dOut');
-    out.innerHTML = this.statsHtml(r, m, true) + this.foodHtml(r, m);
-    out.onclick = (e) => { if (e.target.closest('[data-lootinfo]')) IC.views.combat.lootDialog(m.key); };
+    out.innerHTML = this.statsHtml(r, m, true) + this.foodHtml(r, m) + this.bestHtml();
+    out.onclick = (e) => {
+      const go = e.target.closest('[data-goto-mon]');
+      if (go) { st.monster = go.dataset.gotoMon; IC.store.set('dpsMonster', st.monster); el.querySelector('#dMon').value = st.monster; this.draw(el); el.querySelector('#dMon').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+      else if (e.target.closest('[data-lootinfo]')) IC.views.combat.lootDialog(m.key);
+    };
+    const tMax = out.querySelector('#dTopMax'), tAll = out.querySelector('#dTopAll');
+    if (tMax) tMax.onchange = () => { st.topMax = tMax.value; this.draw(el); };
+    if (tAll) tAll.onchange = () => { st.topAll = tAll.checked; this.draw(el); };
     const food = out.querySelector('#dFood');
     if (food) food.onchange = () => { IC.store.set('dpsFood', +food.value); this.draw(el); };
   },

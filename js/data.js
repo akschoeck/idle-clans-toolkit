@@ -2,7 +2,7 @@
 IC.data = { game: null, names: null, prices: new Map(), summary: new Map(), profile: null, ranks: null, holiday: null };
 IC.GOLD = 19;
 const MIN = 60000, HOUR = 3600000;
-const GAME_V = 7; // bump when slimGame's output shape changes, so cached copies are rebuilt
+const GAME_V = 8; // bump when slimGame's output shape changes, so cached copies are rebuilt
 
 // ---------- game config ----------
 // The endpoint returns MongoDB shell-style JSON (ObjectId("...") etc.), so it is cleaned before parsing.
@@ -54,6 +54,7 @@ function slimGame(g) {
             // The API has no combat level; this formula reproduces the in-game "Lvl" for all 35 monsters it was checked against.
             lvl: Math.floor(((t.EnemyRigourLevel || 0) + (t.EnemyStrengthLevel || 0) + (t.EnemyArcheryLevel || 0) + (t.EnemyMagicLevel || 0)) / 4 + ((t.EnemyDefenceLevel || 0) + t.EnemyHealth) / 2 + 3.25),
             // Full stat block for the DPS calculator. style/weak: 1 stab, 2 slash, 3 pound, 4 crush, 5 archery, 6 magic.
+            req: t.LevelRequirement || 0, // Exterminating level needed, for enemies in that zone
             interval: t.EnemyAttackInterval || 3000, respawn: t.EnemyRespawnTime || 0, style: t.UsedAttackStyle || 0, weak: t.AttackStyleWeakness || 0,
             s: {
               att: t.EnemyRigourLevel || 0, str: t.EnemyStrengthLevel || 0, def: t.EnemyDefenceLevel || 0, arch: t.EnemyArcheryLevel || 0, mag: t.EnemyMagicLevel || 0,
