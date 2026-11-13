@@ -19,11 +19,34 @@
   tabs.onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) show(b.dataset.tab); };
   view.addEventListener('click', (e) => { const b = e.target.closest('[data-goto]'); if (b) show(b.dataset.goto); });
 
+  const keepBtn = document.getElementById('userKeep'), savedBox = document.getElementById('savedUsers');
+  const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+  // Saved characters: quick-switch buttons in the header, each with a remove "x" shown on hover.
+  function savedUi() {
+    const list = IC.store.get('saved', []), cur = IC.data.profile ? IC.data.profile.username : IC.store.get('username', '');
+    savedBox.innerHTML = list.map((n) => `<span class="chip${same(n, cur) ? ' on' : ''}"><button type="button" class="chip-name" data-user="${IC.esc(n)}" title="Switch to ${IC.esc(n)}">${IC.esc(n)}</button><button type="button" class="chip-x" data-forget="${IC.esc(n)}" title="Remove ${IC.esc(n)} from saved characters" aria-label="Remove ${IC.esc(n)}">×</button></span>`).join('');
+    return list.some((n) => same(n, cur));
+  }
+  savedBox.onclick = (e) => {
+    const x = e.target.closest('[data-forget]'), b = e.target.closest('[data-user]');
+    if (x) { IC.store.set('saved', IC.store.get('saved', []).filter((n) => !same(n, x.dataset.forget))); userUi(); }
+    else if (b && !same(b.dataset.user, IC.store.get('username', ''))) IC.setUser(b.dataset.user);
+  };
+  keepBtn.onclick = async () => {
+    const name = input.value.trim() || IC.store.get('username', '');
+    if (!name) return;
+    await IC.setUser(name);
+    if (!IC.data.profile) return; // not found: the error is already shown, nothing to save
+    const canon = IC.data.profile.username, list = IC.store.get('saved', []).filter((n) => !same(n, canon));
+    list.push(canon); IC.store.set('saved', list); userUi();
+  };
   function userUi() {
     const name = IC.store.get('username', '');
     const has = !!name;
-    shown.hidden = !has; shown.textContent = IC.data.profile ? IC.data.profile.username : name;
-    input.hidden = has; saveBtn.hidden = has; changeBtn.hidden = !has;
+    const isSaved = savedUi();
+    // A saved character is already shown as a highlighted button, so the plain name is only needed otherwise.
+    shown.hidden = !has || isSaved; shown.textContent = IC.data.profile ? IC.data.profile.username : name;
+    input.hidden = has; saveBtn.hidden = has; keepBtn.hidden = has; changeBtn.hidden = !has;
   }
   function status() {
     const msgs = [];
@@ -51,7 +74,7 @@
     status(); show(IC.currentView);
   };
   document.getElementById('userForm').onsubmit = (e) => { e.preventDefault(); if (input.value.trim()) IC.setUser(input.value); };
-  changeBtn.onclick = () => { input.hidden = false; saveBtn.hidden = false; changeBtn.hidden = true; shown.hidden = true; input.value = IC.store.get('username', ''); input.focus(); input.select(); };
+  changeBtn.onclick = () => { input.hidden = false; saveBtn.hidden = false; keepBtn.hidden = false; changeBtn.hidden = true; shown.hidden = true; input.value = IC.store.get('username', ''); input.focus(); input.select(); };
 
   // Desktop notifications for watchlist hits (each hit announced once per session).
   const notified = new Set();

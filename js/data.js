@@ -2,7 +2,7 @@
 IC.data = { game: null, names: null, prices: new Map(), summary: new Map(), profile: null, ranks: null, holiday: null };
 IC.GOLD = 19;
 const MIN = 60000, HOUR = 3600000;
-const GAME_V = 2; // bump when slimGame's output shape changes, so cached copies are rebuilt
+const GAME_V = 6; // bump when slimGame's output shape changes, so cached copies are rebuilt
 
 // ---------- game config ----------
 // The endpoint returns MongoDB shell-style JSON (ObjectId("...") etc.), so it is cleaned before parsing.
@@ -16,10 +16,12 @@ function parseGameData(text) {
   return slimGame(JSON.parse(clean));
 }
 
-function normLoot(list, scale = 1) {
+// relative: every roll yields exactly one entry, so weights are shares of their total (true for monster kills:
+// with this the loot per hour matches the game's own panel, without it the values come out at about half).
+function normLoot(list, scale = 1, relative = false) {
   if (!list || !list.length) return [];
   const sum = list.reduce((a, l) => a + (l.Weight || 0), 0);
-  const div = sum > 100.5 ? sum : 100; // weights are percentages unless a table overshoots 100
+  const div = (relative && sum > 0) || sum > 100.5 ? sum : 100; // otherwise weights are percentages unless a table overshoots 100
   return list.map((l) => {
     const min = l.ItemAmountMin || 1, max = Math.max(l.ItemAmountMax || 1, min);
     return { id: l.ItemId, chance: (l.Weight / div) * scale, min, max, avg: (min + max) / 2 };
@@ -32,7 +34,7 @@ function slimGame(g) {
     items[i.ItemId] = {
       id: i.ItemId, key: i.Name, base: i.BaseValue || 0, noShop: !!i.CanNotBeSoldToGameShop, noTrade: !!i.CanNotBeTraded,
       buyLimit: i.PlayerMarketBuyLimit || 0, dead: !!(i.Discontinued || i.Unobtainable), twoHanded: !!i.TwoHanded,
-      interval: i.AttackInterval || 0, req: i.LevelRequirement && i.LevelRequirement.Level ? { skill: IC.skillById(i.LevelRequirement.Skill), level: i.LevelRequirement.Level } : null,
+      interval: i.AttackInterval || 0, style: i.Style || 0, req: i.LevelRequirement && i.LevelRequirement.Level ? { skill: IC.skillById(i.LevelRequirement.Skill), level: i.LevelRequirement.Level } : null,
       stats: {
         str: i.StrengthBonus || 0, acc: i.AccuracyBonus || 0, aStr: i.ArcheryStrengthBonus || 0, aAcc: i.ArcheryAccuracyBonus || 0,
         mStr: i.MagicStrengthBonus || 0, mAcc: i.MagicAccuracyBonus || 0, def: i.DefenceBonus || 0, aDef: i.ArcheryDefenceBonus || 0, mDef: i.MagicDefenceBonus || 0,
@@ -48,7 +50,18 @@ function slimGame(g) {
           if (!t.EnemyHealth) continue;
           monsters.push({
             id: t.TaskId, key: t.Name, zone: grp.CustomId || '', hp: t.EnemyHealth, boss: !!t.IsBoss, keyId: t.IsBoss && t.ItemIdRequired > 0 ? t.ItemIdRequired : null,
-            def: t.EnemyDefenceLevel || 0, atk: Math.max(t.EnemyRigourLevel || 0, t.EnemyArcheryLevel || 0, t.EnemyMagicLevel || 0), loot: normLoot(t.Loot),
+            def: t.EnemyDefenceLevel || 0, atk: Math.max(t.EnemyRigourLevel || 0, t.EnemyArcheryLevel || 0, t.EnemyMagicLevel || 0), str: t.EnemyStrengthLevel || 0,
+            // The API has no combat level; this formula reproduces the in-game "Lvl" for all 35 monsters it was checked against.
+            lvl: Math.floor(((t.EnemyRigourLevel || 0) + (t.EnemyStrengthLevel || 0) + (t.EnemyArcheryLevel || 0) + (t.EnemyMagicLevel || 0)) / 4 + ((t.EnemyDefenceLevel || 0) + t.EnemyHealth) / 2 + 3.25),
+            // Full stat block for the DPS calculator. style/weak: 1 stab, 2 slash, 3 pound, 4 crush, 5 archery, 6 magic.
+            interval: t.EnemyAttackInterval || 3000, respawn: t.EnemyRespawnTime || 0, style: t.UsedAttackStyle || 0, weak: t.AttackStyleWeakness || 0,
+            s: {
+              att: t.EnemyRigourLevel || 0, str: t.EnemyStrengthLevel || 0, def: t.EnemyDefenceLevel || 0, arch: t.EnemyArcheryLevel || 0, mag: t.EnemyMagicLevel || 0,
+              strB: t.EnemyStrengthBonus || 0, accB: t.EnemyAccuracyBonus || 0, aStrB: t.EnemyArcheryStrengthBonus || 0, aAccB: t.EnemyArcheryAccuracyBonus || 0,
+              mStrB: t.EnemyMagicStrengthBonus || 0, mAccB: t.EnemyMagicAccuracyBonus || 0,
+              defB: t.EnemyDefenceBonus || 0, aDefB: t.EnemyArcheryDefenceBonus || 0, mDefB: t.EnemyMagicDefenceBonus || 0,
+            },
+            loot: normLoot(t.Loot, 1, true),
           });
           continue;
         }
@@ -82,7 +95,7 @@ function slimGame(g) {
       itemCosts: (u.ItemCosts || []).map((c) => ({ id: c.Item, amt: c.Amount })),
       reqs: (u.SkillRequirements || []).map((r) => ({ skill: IC.skillById(r.Skill), levels: r.Requirements || [] })),
     })),
-    settings: { tax: S.PlayerShopTaxPercentage, offlineBase: S.BaseOfflineProgressCapHours, offlinePremium: S.OfflineHoursFromPremium, respawnMs: S.EnemyRespawnTimeMS, version: S.ConfigVersion },
+    settings: { tax: S.PlayerShopTaxPercentage, offlineBase: S.BaseOfflineProgressCapHours, offlinePremium: S.OfflineHoursFromPremium, respawnMs: S.EnemyRespawnTimeMS, unarmedMs: S.UnarmedAttackSpeedMS || 3600, weakDef: S.CombatNpcWeaknessDefenceReductionPct || 20, weakDmg: S.CombatNpcWeaknessDamageBoostPct || 20, version: S.ConfigVersion },
   };
 }
 

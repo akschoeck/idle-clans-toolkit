@@ -14,7 +14,7 @@ IC.views.settings = {
           <label><input type="checkbox" id="sPrem" ${S.premium ? 'checked' : ''}> I have premium (+${IC.data.game.settings.offlinePremium}h offline cap)</label>
         </div></div>
       ${p ? `<div class="card"><h3>Level corrections for ${esc(p.username)}</h3>
-        <p class="muted">Levels are worked out from XP with a fitted curve. If one is off by a level compared with the game, type the real level here. Leave blank to use the estimate.</p>
+        <p class="muted">Levels are worked out from XP using the game's XP table. If one ever disagrees with the game, type the real level here. Leave blank to use the estimate.</p>
         <div class="skills">${IC.SKILLS.map((s) => `<label class="skill"><div class="row"><span class="name">${IC.skillName(s)}</span><span class="muted small">est. ${IC.levelForXp(IC.xp[s])}</span></div>
           <input type="number" data-lvl="${s}" min="1" max="${IC.MAX_LEVEL}" value="${over[s] || ''}" placeholder="auto" style="width:100%;margin-top:6px"></label>`).join('')}</div></div>` : ''}
       <div class="card"><h3>Data</h3>

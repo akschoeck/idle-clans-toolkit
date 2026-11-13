@@ -24,11 +24,15 @@ IC.views.combat = {
         return { m, v, key, net: v.total - key, perHr: (v.total - key) * (3600 / cycle), top };
       });
       IC.ui.table(el.querySelector('#cT'), {
-        rows, sort: 6, limit: 80,
+        rows, sort: 10, limit: 80,
         cols: [
           { label: 'Monster', val: (r) => IC.pretty(r.m.key), html: (r) => `<button class="link" data-mon="${r.m.key}">${esc(IC.pretty(r.m.key))}</button>${r.m.boss ? '<span class="tag">boss</span>' : ''}` },
           { label: 'Zone', val: (r) => IC.pretty(r.m.zone) },
+          { label: 'Lvl', num: true, val: (r) => r.m.lvl, html: (r) => fmt.int(r.m.lvl), title: 'Enemy combat level as shown in game (calculated from its stats)' },
           { label: 'HP', num: true, val: (r) => r.m.hp, html: (r) => fmt.int(r.m.hp) },
+          { label: 'Atk', num: true, val: (r) => r.m.atk, html: (r) => fmt.int(r.m.atk), title: 'Enemy attack level (its highest of melee, archery and magic)' },
+          { label: 'Str', num: true, val: (r) => r.m.str || null, html: (r) => (r.m.str ? fmt.int(r.m.str) : '<span class="muted">–</span>'), title: 'Enemy strength level (melee attackers only)' },
+          { label: 'Def', num: true, val: (r) => r.m.def, html: (r) => fmt.int(r.m.def), title: 'Enemy defence level' },
           { label: 'Gold/kill', num: true, val: (r) => r.v.gold, html: (r) => fmt.dec(r.v.gold, 1) },
           { label: 'Items/kill', num: true, val: (r) => r.v.items, html: (r) => fmt.short(r.v.items) },
           { label: 'Net/kill', num: true, val: (r) => r.net, html: (r) => `<b class="${r.net >= 0 ? 'good' : 'bad'}">${fmt.short(r.net)}</b>${r.key ? `<div class="muted small">key ${fmt.short(r.key)}</div>` : ''}` },
@@ -46,7 +50,7 @@ IC.views.combat = {
   lootDialog(key) {
     const m = IC.data.game.monsters.find((x) => x.key === key); if (!m) return;
     const rows = m.loot.map((l) => { const v = l.id === IC.GOLD ? { value: 1 } : IC.sellValue(l.id); return { l, each: v ? v.value : null, ev: v ? v.value * l.chance * l.avg : null }; });
-    const body = IC.ui.dialog(`<div class="dlg-head"><div><h2>${esc(IC.pretty(m.key))}</h2><div class="muted small">${esc(IC.pretty(m.zone))} · ${fmt.int(m.hp)} HP${m.keyId != null ? ' · needs ' + esc(IC.itemName(m.keyId)) : ''}</div></div><button class="ghost" data-close>Close</button></div><div id="lootT"></div>`);
+    const body = IC.ui.dialog(`<div class="dlg-head"><div><h2>${esc(IC.pretty(m.key))}</h2><div class="muted small">${esc(IC.pretty(m.zone))} · level ${fmt.int(m.lvl)} · ${fmt.int(m.hp)} HP · attack ${fmt.int(m.atk)} · ${m.str ? 'strength ' + fmt.int(m.str) + ' · ' : ''}defence ${fmt.int(m.def)}${m.keyId != null ? ' · needs ' + esc(IC.itemName(m.keyId)) : ''}</div></div><button class="ghost" data-close>Close</button></div><div id="lootT"></div>`);
     IC.ui.table(body.querySelector('#lootT'), {
       rows, sort: 4, limit: 100,
       cols: [

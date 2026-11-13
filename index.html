@@ -10,9 +10,11 @@
 <header class="top">
   <div class="brand">Idle Clans Toolkit</div>
   <form id="userForm" class="userbar" autocomplete="off">
+    <span id="savedUsers" class="saved"></span>
     <span id="userShown" class="user-shown" hidden></span>
     <input id="userInput" type="text" placeholder="In-game username" maxlength="40" aria-label="In-game username">
     <button id="userSave" type="submit">Load</button>
+    <button id="userKeep" type="button" class="ghost" hidden title="Load this character and keep it as a quick-switch button">Save</button>
     <button id="userChange" type="button" class="ghost" hidden>Change</button>
     <button id="refreshBtn" type="button" class="ghost" title="Re-fetch prices and profile">Refresh</button>
   </form>
@@ -32,6 +34,8 @@
 <script src="js/view-xp.js"></script>
 <script src="js/view-market.js"></script>
 <script src="js/view-combat.js"></script>
+<script src="js/view-skilling.js"></script>
+<script src="js/view-dps.js"></script>
 <script src="js/view-gear.js"></script>
 <script src="js/view-clan.js"></script>
 <script src="js/view-settings.js"></script>

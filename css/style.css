@@ -99,3 +99,19 @@ dialog::backdrop { background: rgba(0, 0, 0, .5); }
 .chat-msg { padding: 4px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 mark { background: var(--warn-bg); color: inherit; padding: 0 2px; border-radius: 2px; }
 @media (max-width: 600px) { main { padding: 12px; } th, td { padding: 6px 8px; } }
+.dps-layout { display: grid; gap: 14px; grid-template-columns: minmax(300px, 420px) minmax(0, 1fr); align-items: start; }
+@media (max-width: 860px) { .dps-layout { grid-template-columns: 1fr; } }
+.dps-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
+.dps-bonus { margin-top: 10px; font-size: 13px; color: var(--ink2); display: grid; gap: 2px; }
+.dps-bonus b { display: inline-block; min-width: 62px; color: var(--ink); }
+.dps-layout .card h3 { margin: 0 0 8px; }
+.dps-layout .card table { width: 100%; }
+button.small { padding: 2px 8px; }
+button:disabled { opacity: .4; cursor: default; }
+.saved { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.chip { position: relative; display: inline-flex; }
+.chip-name { background: var(--surface); color: var(--ink2); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-weight: 500; }
+.chip.on .chip-name { background: var(--accent-soft); color: var(--ink); border-color: var(--accent); font-weight: 600; }
+.chip-x { position: absolute; top: -7px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 50%; line-height: 1; font-size: 13px; background: var(--bad); border-color: var(--bad); color: #fff; opacity: 0; }
+.chip:hover .chip-x, .chip-x:focus-visible { opacity: 1; }
+@media (hover: none) { .chip-x { opacity: 1; } }
