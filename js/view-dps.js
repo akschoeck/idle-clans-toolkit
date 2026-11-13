@@ -94,6 +94,10 @@ IC.combat = (() => {
     let respawn = m.event ? 0 : (m.respawn || g.respawnMs) / 1000;
     if (o.getUp && respawn) { respawn *= 0.5; notes.push('Get Up! halves the respawn wait'); }
     if (o.resurrection && respawn) { const v = pot.potion_of_resurrection || 40; respawn *= 1 - v / 100; notes.push(`Potion of resurrection: respawn wait -${v}%`); }
+    // Experience bonuses do not change the fight, only the XP rows.
+    let xpMult = 1;
+    if (o.clanXp && !m.event) { xpMult *= 1.1; notes.push('Strength in numbers +10% combat XP'); }
+    if (o.dailyXp) { xpMult *= 1 + (g.dailyXp || 30) / 100; notes.push(`Daily boost +${g.dailyXp || 30}% XP`); }
     const secs = attacksToKill(m.hp, hit, max, min) * interval / 1000 + respawn;
     const kills = 3600 / secs, dmgHr = kills * m.hp;
 
@@ -108,7 +112,7 @@ IC.combat = (() => {
     const fightShare = isFinite(secs) ? (secs - respawn) / secs : 1;
     const takenHr = fightShare * 3600 / (m.interval / 1000) * eHit * (1 - dodge) * eMax / 2;
     return {
-      tot, weapon, style, type, weak, quest, assign, notes, min, interval, hit, max, secs, respawn, kills: isFinite(kills) ? kills : 0, dps: isFinite(secs) ? m.hp / secs : 0, dmgHr: isFinite(dmgHr) ? dmgHr : 0,
+      tot, weapon, style, type, weak, quest, assign, notes, min, xpMult, interval, hit, max, secs, respawn, kills: isFinite(kills) ? kills : 0, dps: isFinite(secs) ? m.hp / secs : 0, dmgHr: isFinite(dmgHr) ? dmgHr : 0,
       dodge, takenHr,
       enemy: { type: eType, hit: eHit, max: eMax, dps: eHit * eMax / 2 / (m.interval / 1000) },
     };
@@ -137,7 +141,9 @@ IC.views.dps = {
     { key: 'swiftness', group: 'Potions', label: 'Potion of swiftness', what: '+10% attack speed.' },
     { key: 'resurrection', group: 'Potions', label: 'Potion of resurrection', what: 'Enemies respawn 40% sooner.' },
     { key: 'getUp', group: 'Clan', label: 'Get Up! clan upgrade', what: 'Enemy respawn wait halved. The game does not publish which upgrades a clan owns.' },
+    { key: 'clanXp', group: 'Clan', label: 'Strength in numbers clan upgrade', what: '+10% combat experience. Does not apply in clan combat events.' },
     { key: 'clanDmg', group: 'Clan', label: 'Clan quest damage buff', what: 'The temporary +10% damage buff from a completed clan quest, for the style you are using.' },
+    { key: 'dailyXp', group: 'Experience', label: 'Daily experience boost', what: 'The +30% experience boost from the daily reward, while it is running.' },
   ],
   owns(b) { return !b.own || !!(IC.data.profile && (IC.data.profile.upgrades || {})[b.own] > 0); },
   // The quest box also drives otherworldly weapons, so it stays usable when one is equipped.
@@ -182,9 +188,9 @@ IC.views.dps = {
         ${row('DPS', fmt.dec(r.dps, 2), 'Damage per second including the respawn wait and damage wasted on the killing blow')}
         ${row('Estimated kills per hour', fmt.int(Math.floor(r.kills)), `${fmt.dec(r.secs, 1)} seconds per kill including respawn`)}
         ${row('Average kill time', isFinite(r.secs) ? `${fmt.dec(r.secs - r.respawn, 1)}s` : '–', `Fighting time only. With the ${fmt.dec(r.respawn, 2)}s respawn wait it is ${fmt.dec(r.secs, 1)}s per kill. This is the number the Combat tab's "My average kill time" box expects.`)}
-        ${row('Mixed exp per hour', fmt.int(r.dmgHr * 4 / 3), 'Per skill on the Mixed style. Total combat XP is 4 per damage, plus 1 per damage to Health.')}
-        ${row('Total combat exp per hour', fmt.int(r.dmgHr * 4))}
-        ${row('Health exp per hour', fmt.int(r.dmgHr))}
+        ${row('Mixed exp per hour', fmt.int(r.dmgHr * r.xpMult * 4 / 3), 'Per skill on the Mixed style, as the game shows it. Total combat XP is 4 per damage, plus 1 per damage to Health.')}
+        ${row('Total combat exp per hour', fmt.int(r.dmgHr * r.xpMult * 4))}
+        ${row('Health exp per hour', fmt.int(r.dmgHr * r.xpMult))}
         ${row(why('Loot per hour, base sell value'), fmt.int(lv.shopHr))}
         ${row(why('Loot per hour, player market'), fmt.int(lv.marketHr), lv.key ? `After ${fmt.short(lv.key)} per kill for the key` : '')}
       </tbody></table>
@@ -215,7 +221,7 @@ IC.views.dps = {
       const r = IC.combat.calc(st.gear, IC.levels, m, this.opts());
       if (!(r.kills > 0)) continue;
       const foodCost = food && foodPrice != null ? (r.takenHr / food.heal) * foodPrice : 0;
-      rows.push({ m, r, xp: r.dmgHr * 5, gold: this.loot(m, r).marketHr - foodCost, foodHr: food ? r.takenHr / food.heal : null, locked });
+      rows.push({ m, r, xp: r.dmgHr * r.xpMult * 5, gold: this.loot(m, r).marketHr - foodCost, foodHr: food ? r.takenHr / food.heal : null, locked });
     }
     const list = (key, label, value) => {
       const top = rows.slice().sort((a, b) => b[key] - a[key]).slice(0, 10);
