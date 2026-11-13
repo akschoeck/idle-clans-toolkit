@@ -1,5 +1,5 @@
-// Turkey: finds the gear set with the highest DPS against the Big ol' Turkey (the clan combat event boss) or the
-// ordinary Turkey. The search itself is generic: IC.combat.bestGear works for any enemy.
+// Turkey: finds the gear set with the highest damage against the Big ol' Turkey, the clan combat event boss.
+// The search itself is generic: IC.combat.bestGear works for any enemy.
 IC.combat.bestGear = function (levels, m, opts) {
   const items = IC.data.game.items, worn = opts.worn || {}, EPS = 1e-9;
   const bySlot = {};
@@ -62,8 +62,8 @@ IC.combat.bestGear = function (levels, m, opts) {
 IC.views.turkey = {
   label: 'Turkey',
   blurb: "The gear set with the highest damage against the Big ol' Turkey clan event boss that your levels allow.",
-  state: { target: 'big_old_turkey', budget: '', untradeable: false, weapon: null, over: {} },
-  NAMES: { big_old_turkey: "Big ol' Turkey", turkey: 'Turkey' },
+  state: { budget: '', untradeable: false, weapon: null, over: {} },
+  NAMES: { big_old_turkey: "Big ol' Turkey" },
   // Average damage of one attack, counting misses.
   perAttack(r) { return r.hit * (r.max + 1) / 2; },
   // Everything the character could put in a slot under the current filters (same rules as the search).
@@ -113,9 +113,9 @@ IC.views.turkey = {
   },
   render(el) {
     const p = IC.data.profile, st = this.state, D = IC.views.dps;
-    const m = IC.data.game.monsters.find((x) => x.key === st.target) || IC.data.game.monsters.find((x) => x.key === 'turkey');
+    const m = IC.data.game.monsters.find((x) => x.key === 'big_old_turkey');
     if (!p) { el.innerHTML = `<h2>Turkey</h2>${IC.ui.needUser()}`; return; }
-    if (!m) { el.innerHTML = '<h2>Turkey</h2><div class="note">The Turkey is not in the current game data.</div>'; return; }
+    if (!m) { el.innerHTML = '<h2>Turkey</h2><div class="note">The Big ol Turkey is not in the current game data.</div>'; return; }
     const name = this.NAMES[m.key] || IC.pretty(m.key), ev = m.event;
     const worn = D.worn(), budget = +st.budget || Infinity;
     const allow = (it) => {
@@ -131,12 +131,10 @@ IC.views.turkey = {
         ? `The best gear for the Big ol' Turkey, the boss of clan combat events (${fmt.int(m.hp)} HP solo), from everything ${esc(p.username)} meets the level requirement for. Everyone attacks it on the same fixed ${fmt.dec(m.fixedMs / 1000, 0)}-second timer, so weapon speed does not matter: only hit chance and max hit do. It is weak to every attack style and never hits back.`
         : `The best gear for killing the Turkey (Lvl ${m.lvl}, ${m.hp} HP) as fast as possible, from everything ${esc(p.username)} meets the level requirement for.`} Items you already wear are always considered.</p>
       <div class="controls">
-        <label>Target <select id="tTarget">${Object.entries(this.NAMES).filter(([k]) => IC.data.game.monsters.some((x) => x.key === k)).map(([k, v]) => `<option value="${k}" ${k === m.key ? 'selected' : ''}>${esc(v)}${k === 'big_old_turkey' ? ' (clan event)' : ' (Woods)'}</option>`).join('')}</select></label>
         <label title="Leave out items that cost more than this each">Max price per item <input type="number" id="tBudget" min="0" placeholder="any" value="${esc(st.budget)}"></label>
         <label title="Items with no market or shop price, such as quest and boss rewards"><input type="checkbox" id="tUn" ${st.untradeable ? 'checked' : ''}> Include items that cannot be bought</label>
       </div>
       <div id="tOut"></div>`;
-    el.querySelector('#tTarget').onchange = (e) => { st.target = e.target.value; st.weapon = null; st.over = {}; this.render(el); };
     el.querySelector('#tBudget').onchange = (e) => { st.budget = e.target.value; st.weapon = null; st.over = {}; this.render(el); };
     el.querySelector('#tUn').onchange = (e) => { st.untradeable = e.target.checked; st.weapon = null; st.over = {}; this.render(el); };
     const out = el.querySelector('#tOut');
