@@ -3,7 +3,7 @@
 // kills per hour all matched. Archery and magic use the same formulas with their own stats but are unverified.
 IC.combat = (() => {
   const T = Math.trunc;
-  const STYLE = ['None', 'Stab', 'Slash', 'Pound', 'Crush', 'Archery', 'Magic'];
+  const STYLE = ['None', 'Stab', 'Slash', 'Pound', 'Crush', 'Archery', 'Magic', undefined, 'All']; // 8 = weak to every style
   const kind = (style) => (style === 5 ? 'archery' : style === 6 ? 'magic' : 'melee');
   // Accuracy and defence ratings: (bonus + 64) × (level + 8) / 10, truncated.
   const aug = (bonus, level) => T((bonus + 64) * (level + 8) / 10);
@@ -41,21 +41,21 @@ IC.combat = (() => {
     const g = IC.data.game.settings, { tot, weapon } = gearTotals(gear);
     const L = (k) => levels[k] || 1;
     const style = weapon ? weapon.style : 0, type = kind(style);
-    const interval = (weapon && weapon.interval) || g.unarmedMs;
+    const interval = m.fixedMs || (weapon && weapon.interval) || g.unarmedMs; // event bosses ignore weapon speed
     const mine = { melee: [tot.acc, L('attack'), tot.str, L('strength')], archery: [tot.aAcc, L('archery'), tot.aStr, L('archery')], magic: [tot.mAcc, L('magic'), tot.mStr, L('magic')] }[type];
-    const weak = style > 0 && m.weak === style;
+    const weak = style > 0 && (m.weak === style || m.weak === 8);
     let enemyDef = aug({ melee: m.s.defB, archery: m.s.aDefB, magic: m.s.mDefB }[type], m.s.def);
     let max = maxHit(mine[2], mine[3]);
     if (weak) { enemyDef = T(enemyDef * (1 - g.weakDef / 100)); max = T(max * (1 + g.weakDmg / 100)); }
     const hit = chance(aug(mine[0], mine[1]), enemyDef);
-    const respawn = (m.respawn || g.respawnMs) / 1000;
+    const respawn = m.event ? 0 : (m.respawn || g.respawnMs) / 1000;
     const secs = attacksToKill(m.hp, hit, max) * interval / 1000 + respawn;
     const kills = 3600 / secs, dmgHr = kills * m.hp;
 
     const eType = kind(m.style);
     const theirs = { melee: [m.s.accB, m.s.att, m.s.strB, m.s.str], archery: [m.s.aAccB, m.s.arch, m.s.aStrB, m.s.arch], magic: [m.s.mAccB, m.s.mag, m.s.mStrB, m.s.mag] }[eType];
     const myDef = aug({ melee: tot.def, archery: tot.aDef, magic: tot.mDef }[eType], L('defence'));
-    const eHit = chance(aug(theirs[0], theirs[1]), myDef) * ENEMY_HIT_FACTOR, eMax = maxHit(theirs[2], theirs[3]);
+    const eHit = m.event ? 0 : chance(aug(theirs[0], theirs[1]), myDef) * ENEMY_HIT_FACTOR, eMax = maxHit(theirs[2], theirs[3]);
     const dodge = Math.min(L('agility'), 120) * 0.0018;
     // Damage you take: the enemy only attacks while it is alive, so the respawn wait is excluded.
     const fightShare = isFinite(secs) ? (secs - respawn) / secs : 1;
@@ -83,13 +83,14 @@ IC.views.dps = {
   gearChanged() { const g = this.gearFor(), w = this.worn(); return Object.keys(Object.assign({}, g, w)).some((k) => (g[k] == null ? -1 : g[k]) !== (w[k] == null ? -1 : w[k])); },
   loot(m, r) {
     const shop = IC.lootValue(m.loot, 'shop').total, market = IC.lootValue(m.loot).total, key = m.keyId != null ? IC.buyCost(m.keyId) || 0 : 0;
-    return { shop, market, key, shopHr: shop * r.kills, marketHr: (market - key) * r.kills };
+    const perHr = m.lootEvery ? r.dmgHr / m.lootEvery : r.kills; // event bosses roll loot per 500 damage, not per kill
+    return { shop, market, key, shopHr: shop * perHr, marketHr: (market - key) * perHr };
   },
   // The two result cards ("Your stats" and the enemy), shared with the monster dialog on the Combat tab.
   statsHtml(r, m, lootLink) {
     const C = IC.combat, L = IC.levels, lv = this.loot(m, r);
     const row = (label, value, title) => `<tr title="${esc(title || '')}"><td class="muted">${label}</td><td class="num"><b>${value}</b></td></tr>`;
-    const why = (label) => (lootLink ? `<button class="link" data-lootinfo title="Show how this is worked out">${label}</button>` : label);
+    const why = (label) => (lootLink && !m.event ? `<button class="link" data-lootinfo title="Show how this is worked out">${label}</button>` : label);
     return `<div class="cols">
       <div class="card"><h3>Your stats</h3><table><tbody>
         ${row('Hit chance', fmt.pct(r.hit, 2))}
@@ -124,7 +125,7 @@ IC.views.dps = {
     let hidden = 0;
     const rows = [];
     for (const m of IC.data.game.monsters) {
-      if (m.lvl > maxLvl) continue;
+      if (m.lvl > maxLvl || m.event) continue;
       const special = m.boss || m.keyId != null || m.zone === 'invocation';
       const locked = m.zone === 'exterminating' && m.req > ext;
       if ((special || locked) && !st.topAll) { hidden++; continue; }

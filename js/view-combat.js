@@ -5,7 +5,7 @@ IC.views.combat = {
   state: { zone: 'all', maxLvl: '' },
   render(el) {
     const st = this.state, g = IC.data.game;
-    const zones = [...new Set(g.monsters.map((m) => m.zone).filter(Boolean))];
+    const zones = [...new Set(g.monsters.filter((m) => !m.event).map((m) => m.zone).filter(Boolean))];
     el.innerHTML = `<h2>Loot value per kill</h2>
       <p class="muted">Each drop's chance × average quantity × sale value. The API has no combat simulator, so enter your own average kill time to get gold per hour. Boss rows subtract the price of the key.</p>
       <div class="controls">
@@ -19,7 +19,7 @@ IC.views.combat = {
     const draw = () => {
       const cycle = (IC.settings.killSeconds || 12) + g.settings.respawnMs / 1000;
       const maxLvl = +st.maxLvl || Infinity;
-      const rows = g.monsters.filter((m) => (st.zone === 'all' || m.zone === st.zone) && m.lvl <= maxLvl).map((m) => {
+      const rows = g.monsters.filter((m) => (st.zone === 'all' || m.zone === st.zone) && m.lvl <= maxLvl && !m.event).map((m) => {
         const v = IC.lootValue(m.loot);
         const key = m.keyId != null ? IC.buyCost(m.keyId) || 0 : 0;
         const top = m.loot.filter((l) => l.id !== IC.GOLD).map((l) => ({ l, ev: (IC.sellValue(l.id) || { value: 0 }).value * l.chance * l.avg })).sort((a, b) => b.ev - a.ev)[0];

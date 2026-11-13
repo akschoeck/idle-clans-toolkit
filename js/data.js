@@ -2,7 +2,7 @@
 IC.data = { game: null, names: null, prices: new Map(), summary: new Map(), profile: null, ranks: null, holiday: null };
 IC.GOLD = 19;
 const MIN = 60000, HOUR = 3600000;
-const GAME_V = 8; // bump when slimGame's output shape changes, so cached copies are rebuilt
+const GAME_V = 9; // bump when slimGame's output shape changes, so cached copies are rebuilt
 
 // ---------- game config ----------
 // The endpoint returns MongoDB shell-style JSON (ObjectId("...") etc.), so it is cleaned before parsing.
@@ -45,7 +45,9 @@ function slimGame(g) {
   for (const [skillName, groups] of Object.entries(g.Tasks)) {
     for (const grp of groups) {
       for (const t of grp.Items || []) {
-        if (t.Disabled || t.Hidden) continue;
+        // The Big ol' Turkey is flagged Disabled because it only exists inside clan combat events; keep it for the calculators.
+        const event = skillName === 'Combat' && t.Name === 'big_old_turkey';
+        if ((t.Disabled && !event) || t.Hidden) continue;
         if (skillName === 'Combat') {
           if (!t.EnemyHealth) continue;
           monsters.push({
@@ -55,6 +57,8 @@ function slimGame(g) {
             lvl: Math.floor(((t.EnemyRigourLevel || 0) + (t.EnemyStrengthLevel || 0) + (t.EnemyArcheryLevel || 0) + (t.EnemyMagicLevel || 0)) / 4 + ((t.EnemyDefenceLevel || 0) + t.EnemyHealth) / 2 + 3.25),
             // Full stat block for the DPS calculator. style/weak: 1 stab, 2 slash, 3 pound, 4 crush, 5 archery, 6 magic.
             req: t.LevelRequirement || 0, // Exterminating level needed, for enemies in that zone
+            // Clan combat event boss: everyone attacks on one fixed timer, it never hits back, and loot is one roll per 500 damage.
+            event, fixedMs: event ? g.SharedSettings.Settings.MinigameSkillAttackInterval || 3000 : 0, lootEvery: event ? 500 : 0,
             interval: t.EnemyAttackInterval || 3000, respawn: t.EnemyRespawnTime || 0, style: t.UsedAttackStyle || 0, weak: t.AttackStyleWeakness || 0,
             s: {
               att: t.EnemyRigourLevel || 0, str: t.EnemyStrengthLevel || 0, def: t.EnemyDefenceLevel || 0, arch: t.EnemyArcheryLevel || 0, mag: t.EnemyMagicLevel || 0,
@@ -62,7 +66,7 @@ function slimGame(g) {
               mStrB: t.EnemyMagicStrengthBonus || 0, mAccB: t.EnemyMagicAccuracyBonus || 0,
               defB: t.EnemyDefenceBonus || 0, aDefB: t.EnemyArcheryDefenceBonus || 0, mDefB: t.EnemyMagicDefenceBonus || 0,
             },
-            loot: normLoot(t.Loot, 1, true),
+            loot: normLoot(t.Loot, 1, !event), // event rolls can come up empty, so those weights stay percentages
           });
           continue;
         }
@@ -96,7 +100,7 @@ function slimGame(g) {
       itemCosts: (u.ItemCosts || []).map((c) => ({ id: c.Item, amt: c.Amount })),
       reqs: (u.SkillRequirements || []).map((r) => ({ skill: IC.skillById(r.Skill), levels: r.Requirements || [] })),
     })),
-    settings: { tax: S.PlayerShopTaxPercentage, offlineBase: S.BaseOfflineProgressCapHours, offlinePremium: S.OfflineHoursFromPremium, respawnMs: S.EnemyRespawnTimeMS, unarmedMs: S.UnarmedAttackSpeedMS || 3600, weakDef: S.CombatNpcWeaknessDefenceReductionPct || 20, weakDmg: S.CombatNpcWeaknessDamageBoostPct || 20, version: S.ConfigVersion },
+    settings: { tax: S.PlayerShopTaxPercentage, offlineBase: S.BaseOfflineProgressCapHours, offlinePremium: S.OfflineHoursFromPremium, respawnMs: S.EnemyRespawnTimeMS, eventXp: S.CombatExperienceEventExpMultiplier || 6, unarmedMs: S.UnarmedAttackSpeedMS || 3600, weakDef: S.CombatNpcWeaknessDefenceReductionPct || 20, weakDmg: S.CombatNpcWeaknessDamageBoostPct || 20, version: S.ConfigVersion },
   };
 }
 

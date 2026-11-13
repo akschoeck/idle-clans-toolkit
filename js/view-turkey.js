@@ -1,5 +1,5 @@
-// Turkey: finds the gear set with the highest DPS against the Turkey that your levels allow.
-// The search is generic (IC.combat.bestGear works for any enemy); this tab just points it at the Turkey.
+// Turkey: finds the gear set with the highest DPS against the Big ol' Turkey (the clan combat event boss) or the
+// ordinary Turkey. The search itself is generic: IC.combat.bestGear works for any enemy.
 IC.combat.bestGear = function (levels, m, opts) {
   const items = IC.data.game.items, worn = opts.worn || {}, EPS = 1e-9;
   const bySlot = {};
@@ -61,8 +61,11 @@ IC.combat.bestGear = function (levels, m, opts) {
 
 IC.views.turkey = {
   label: 'Turkey',
-  blurb: 'The gear set with the highest DPS against the Turkey that your levels allow.',
-  state: { budget: '', untradeable: false, weapon: null, over: {} },
+  blurb: "The gear set with the highest damage against the Big ol' Turkey clan event boss that your levels allow.",
+  state: { target: 'big_old_turkey', budget: '', untradeable: false, weapon: null, over: {} },
+  NAMES: { big_old_turkey: "Big ol' Turkey", turkey: 'Turkey' },
+  // Average damage of one attack, counting misses.
+  perAttack(r) { return r.hit * (r.max + 1) / 2; },
   // Everything the character could put in a slot under the current filters (same rules as the search).
   slotItems(slot, worn, allow) {
     return IC.data.game.items.filter((it) => {
@@ -74,6 +77,7 @@ IC.views.turkey = {
       return worn[slot] === it.id || allow(it);
     });
   },
+  clock(secs) { if (!isFinite(secs)) return '–'; const s = Math.round(secs); return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`; },
   // Pop-up: the five best choices for one slot, with the rest of the shown set left as it is.
   options(el, slot, gear, worn, allow, m) {
     const st = this.state, D = IC.views.dps, base = IC.combat.calc(gear, IC.levels, m);
@@ -87,15 +91,15 @@ IC.views.turkey = {
     const top = rows.slice(0, 5);
     for (const extra of [cur, worn[slot] == null ? -1 : worn[slot]]) if (!top.some((x) => x.id === extra)) { const x = rows.find((y) => y.id === extra); if (x) top.push(x); }
     const off = slot === 'leftHand' && base.weapon && base.weapon.twoHanded;
-    const body = IC.ui.dialog(`<div class="dlg-head"><div><h2>${esc(D.slotLabel(slot))}: top options</h2><div class="muted small">DPS against the Turkey with the rest of the shown set unchanged. ${rows.length} possible choices; the best five are listed${top.length > 5 ? ', plus what is shown and what you wear' : ''}.</div></div><button class="ghost" data-close>Close</button></div>
+    const body = IC.ui.dialog(`<div class="dlg-head"><div><h2>${esc(D.slotLabel(slot))}: top options</h2><div class="muted small">Against the ${esc(this.NAMES[m.key])} with the rest of the shown set unchanged. ${rows.length} possible choices; the best five are listed${top.length > 5 ? ', plus what is shown and what you wear' : ''}.</div></div><button class="ghost" data-close>Close</button></div>
       ${off ? '<div class="note">The shown weapon is two-handed, so the off-hand slot does nothing with it.</div>' : ''}
       ${slot === 'rightHand' ? '<p class="muted small">Changing only the weapon keeps the other pieces. For the best supporting gear for a weapon, use "Best result for each weapon" on the page.</p>' : ''}
-      <div class="tablewrap"><table><thead><tr><th>#</th><th>Item</th><th class="num">DPS</th><th class="num">Kills/hr</th><th class="num">Price</th><th></th></tr></thead><tbody>
-      ${top.map((x) => { const it = x.id >= 0 ? IC.data.game.items[x.id] : null, d = x.r.kills - base.kills;
+      <div class="tablewrap"><table><thead><tr><th>#</th><th>Item</th><th class="num">DPS</th><th class="num">${m.event ? 'Damage/attack' : 'Kills/hr'}</th><th class="num">Price</th><th></th></tr></thead><tbody>
+      ${top.map((x) => { const it = x.id >= 0 ? IC.data.game.items[x.id] : null, val = (r) => (m.event ? this.perAttack(r) : r.kills), d = val(x.r) - val(base);
         return `<tr><td class="muted">${rows.indexOf(x) + 1}</td><td>${it ? esc(IC.itemName(x.id)) : 'Empty slot'}${x.id === cur ? '<span class="tag good">shown</span>' : ''}${(worn[slot] == null ? -1 : worn[slot]) === x.id && it ? '<span class="tag">worn</span>' : ''}${it && it.twoHanded ? '<span class="tag">2H</span>' : ''}
           ${it ? `<div class="muted small">${esc(D.bonusText(it, x.r.type))}${it.interval && slot === 'rightHand' ? ` · ${fmt.dec(it.interval / 1000, 2)}s ${IC.combat.STYLE[it.style] || ''}` : ''}</div>` : ''}</td>
           <td class="num">${fmt.dec(x.r.dps, 3)}</td>
-          <td class="num"><b>${fmt.int(Math.floor(x.r.kills))}</b> <span class="small ${d > 0.05 ? 'good' : d < -0.05 ? 'bad' : 'muted'}">${d >= 0 ? '+' : ''}${fmt.dec(d, 1)}</span></td>
+          <td class="num"><b>${m.event ? fmt.dec(val(x.r), 2) : fmt.int(Math.floor(x.r.kills))}</b> <span class="small ${d > 0.004 ? 'good' : d < -0.004 ? 'bad' : 'muted'}">${d >= 0 ? '+' : ''}${fmt.dec(d, m.event ? 2 : 1)}</span></td>
           <td class="num">${!it || (worn[slot] === x.id) ? '' : x.cost == null ? '<span class="muted">not for sale</span>' : fmt.short(x.cost)}</td>
           <td class="num">${x.id === cur ? '' : `<button class="ghost small" data-use="${x.id}">Use</button>`}</td></tr>`; }).join('')}
       </tbody></table></div>`);
@@ -109,9 +113,10 @@ IC.views.turkey = {
   },
   render(el) {
     const p = IC.data.profile, st = this.state, D = IC.views.dps;
-    const m = IC.data.game.monsters.find((x) => x.key === 'turkey');
+    const m = IC.data.game.monsters.find((x) => x.key === st.target) || IC.data.game.monsters.find((x) => x.key === 'turkey');
     if (!p) { el.innerHTML = `<h2>Turkey</h2>${IC.ui.needUser()}`; return; }
     if (!m) { el.innerHTML = '<h2>Turkey</h2><div class="note">The Turkey is not in the current game data.</div>'; return; }
+    const name = this.NAMES[m.key] || IC.pretty(m.key), ev = m.event;
     const worn = D.worn(), budget = +st.budget || Infinity;
     const allow = (it) => {
       const cost = it.noTrade ? null : IC.buyCost(it.id);
@@ -122,12 +127,16 @@ IC.views.turkey = {
     const now = IC.combat.calc(worn, IC.levels, m);
     const best = results.find((x) => x.weapon.id === st.weapon) || results[0];
     el.innerHTML = `<h2>Turkey</h2>
-      <p class="muted">The best gear for killing the Turkey (Lvl ${m.lvl}, ${m.hp} HP) as fast as possible, from everything ${esc(p.username)} meets the level requirement for. Items you already wear are always considered.</p>
+      <p class="muted">${ev
+        ? `The best gear for the Big ol' Turkey, the boss of clan combat events (${fmt.int(m.hp)} HP solo), from everything ${esc(p.username)} meets the level requirement for. Everyone attacks it on the same fixed ${fmt.dec(m.fixedMs / 1000, 0)}-second timer, so weapon speed does not matter: only hit chance and max hit do. It is weak to every attack style and never hits back.`
+        : `The best gear for killing the Turkey (Lvl ${m.lvl}, ${m.hp} HP) as fast as possible, from everything ${esc(p.username)} meets the level requirement for.`} Items you already wear are always considered.</p>
       <div class="controls">
+        <label>Target <select id="tTarget">${Object.entries(this.NAMES).filter(([k]) => IC.data.game.monsters.some((x) => x.key === k)).map(([k, v]) => `<option value="${k}" ${k === m.key ? 'selected' : ''}>${esc(v)}${k === 'big_old_turkey' ? ' (clan event)' : ' (Woods)'}</option>`).join('')}</select></label>
         <label title="Leave out items that cost more than this each">Max price per item <input type="number" id="tBudget" min="0" placeholder="any" value="${esc(st.budget)}"></label>
         <label title="Items with no market or shop price, such as quest and boss rewards"><input type="checkbox" id="tUn" ${st.untradeable ? 'checked' : ''}> Include items that cannot be bought</label>
       </div>
       <div id="tOut"></div>`;
+    el.querySelector('#tTarget').onchange = (e) => { st.target = e.target.value; st.weapon = null; st.over = {}; this.render(el); };
     el.querySelector('#tBudget').onchange = (e) => { st.budget = e.target.value; st.weapon = null; st.over = {}; this.render(el); };
     el.querySelector('#tUn').onchange = (e) => { st.untradeable = e.target.checked; st.weapon = null; st.over = {}; this.render(el); };
     const out = el.querySelector('#tOut');
@@ -151,17 +160,23 @@ IC.views.turkey = {
         <p class="muted small">${same ? 'This is what you are already wearing.' : `Cost of the pieces you do not have: <b>${isFinite(setCost) ? fmt.short(setCost) : 'includes items that are not for sale'}</b> at the cheapest current offers.`} Click a slot name to see its top five options and swap one in. Where several items give the same result, the one you already wear is kept, otherwise the cheapest.</p>
       </div>
       <div>
-        <div class="card"><h3>Against the Turkey</h3><table><thead><tr><th></th><th class="num">${edited ? 'Edited set' : 'This set'}</th><th class="num">Worn now</th></tr></thead><tbody>
+        <div class="card"><h3>Against the ${esc(name)}</h3><table><thead><tr><th></th><th class="num">${edited ? 'Edited set' : 'This set'}</th><th class="num">Worn now</th></tr></thead><tbody>
           ${row('DPS', fmt.dec(r.dps, 2) + (gain != null && gain > 0.0005 ? ` <span class="good small">+${fmt.pct(gain, 1)}</span>` : ''), fmt.dec(now.dps, 2))}
-          ${row('Kills per hour', fmt.int(Math.floor(r.kills)), fmt.int(Math.floor(now.kills)))}
-          ${row('Average kill time', `${fmt.dec(r.secs - r.respawn, 2)}s`, `${fmt.dec(now.secs - now.respawn, 2)}s`)}
+          ${ev ? row('Average damage per attack', fmt.dec(this.perAttack(r), 2), fmt.dec(this.perAttack(now), 2)) : row('Kills per hour', fmt.int(Math.floor(r.kills)), fmt.int(Math.floor(now.kills)))}
+          ${ev ? row('Time to kill it alone', this.clock(r.secs), this.clock(now.secs)) : row('Average kill time', `${fmt.dec(r.secs - r.respawn, 2)}s`, `${fmt.dec(now.secs - now.respawn, 2)}s`)}
           ${row('Hit chance', fmt.pct(r.hit, 2), fmt.pct(now.hit, 2))}
           ${row('Max hit', fmt.int(r.max), fmt.int(now.max))}
           ${row('Attack every', `${fmt.dec(r.interval / 1000, 2)}s`, `${fmt.dec(now.interval / 1000, 2)}s`)}
-          ${row('Total exp per hour', fmt.int(r.dmgHr * 5), fmt.int(now.dmgHr * 5))}
-          ${row('Loot per hour, player market', fmt.int(D.loot(m, r).marketHr), fmt.int(D.loot(m, now).marketHr))}
+          ${ev ? '' : row('Total exp per hour', fmt.int(r.dmgHr * 5), fmt.int(now.dmgHr * 5))}
+          ${ev ? '' : row('Loot per hour, player market', fmt.int(D.loot(m, r).marketHr), fmt.int(D.loot(m, now).marketHr))}
         </tbody></table>
-        <p class="muted small">${esc(IC.pretty(r.type))} attack. The Turkey respawns in ${fmt.dec(r.respawn, 2)}s, which is included in DPS and kills per hour. Levels used: Attack ${IC.levels.attack}, Strength ${IC.levels.strength}, Archery ${IC.levels.archery}, Magic ${IC.levels.magic}.</p></div>
+        ${ev ? `<p class="muted small">${esc(IC.pretty(r.type))} attack. Your gear only changes how fast it dies, not what the event pays:</p>
+        <table><tbody>
+          <tr><td class="muted">Loot event, solo</td><td class="num"><b>${fmt.int(m.hp / m.lootEvery)} loot rolls</b>, worth about ${fmt.int(IC.lootValue(m.loot).total * m.hp / m.lootEvery)} gold</td></tr>
+          <tr><td class="muted">Experience event, solo</td><td class="num"><b>${fmt.int(m.hp * 5 * IC.data.game.settings.eventXp)}</b> XP (${IC.data.game.settings.eventXp}× normal)</td></tr>
+        </tbody></table>
+        <p class="muted small">One loot roll per ${m.lootEvery} damage, handed to a random participant; about 18% of rolls give nothing. With more players its health rises (2,000 solo, 4,200 for two, 12,000 for five), and the best gear stays the same. Levels used: Attack ${IC.levels.attack}, Strength ${IC.levels.strength}, Archery ${IC.levels.archery}, Magic ${IC.levels.magic}.</p>`
+        : `<p class="muted small">${esc(IC.pretty(r.type))} attack. The Turkey respawns in ${fmt.dec(r.respawn, 2)}s, which is included in DPS and kills per hour. Levels used: Attack ${IC.levels.attack}, Strength ${IC.levels.strength}, Archery ${IC.levels.archery}, Magic ${IC.levels.magic}.</p>`}</div>
         <div class="card"><h3>Best result for each weapon</h3><div id="tW"></div></div>
       </div></div>
       <p class="muted small">Each weapon you can use is paired with the best supporting gear for it, then the sets are ranked by DPS. Melee is matched to the game; archery and magic use the same formulas and have not been checked. Not included: potions, enchantments, set effects, special weapon effects and clan boosts.</p>`;
@@ -170,8 +185,10 @@ IC.views.turkey = {
       cols: [
         { label: 'Weapon', val: (x) => IC.itemName(x.weapon.id), html: (x) => `<button class="link" data-weapon="${x.weapon.id}">${esc(IC.itemName(x.weapon.id))}</button>${x.weapon.id === gear.rightHand ? '<span class="tag good">shown</span>' : ''}${worn.rightHand === x.weapon.id ? '<span class="tag">worn</span>' : ''}` },
         { label: 'DPS', num: true, val: (x) => x.r.dps, html: (x) => fmt.dec(x.r.dps, 2) },
-        { label: 'Kills/hr', num: true, val: (x) => x.r.kills, html: (x) => fmt.int(Math.floor(x.r.kills)) },
-        { label: 'Speed', num: true, val: (x) => -x.weapon.interval, html: (x) => `${fmt.dec(x.weapon.interval / 1000, 2)}s` },
+        ev ? { label: 'Damage/attack', num: true, val: (x) => this.perAttack(x.r), html: (x) => fmt.dec(this.perAttack(x.r), 2) }
+          : { label: 'Kills/hr', num: true, val: (x) => x.r.kills, html: (x) => fmt.int(Math.floor(x.r.kills)) },
+        ev ? { label: 'Max hit', num: true, val: (x) => x.r.max, html: (x) => fmt.int(x.r.max) }
+          : { label: 'Speed', num: true, val: (x) => -x.weapon.interval, html: (x) => `${fmt.dec(x.weapon.interval / 1000, 2)}s` },
         { label: 'Cost to buy', num: true, val: (x) => (isFinite(x.cost) ? x.cost : null), html: (x) => (isFinite(x.cost) ? fmt.short(x.cost) : '<span class="muted">not for sale</span>'), title: 'Total for the pieces of that set you are not wearing' },
       ],
     });
@@ -179,8 +196,8 @@ IC.views.turkey = {
     out.querySelector('.dps-layout').addEventListener('click', (e) => { const b = e.target.closest('[data-tslot]'); if (b) this.options(el, b.dataset.tslot, gear, worn, allow, m); });
     if (out.querySelector('#tBest')) out.querySelector('#tBest').onclick = () => { st.over = {}; this.render(el); };
     out.querySelector('#tLoad').onclick = () => {
-      Object.assign(D.state, { gear: Object.assign({}, gear), user: p.username, monster: 'turkey' });
-      IC.store.set('dpsMonster', 'turkey');
+      Object.assign(D.state, { gear: Object.assign({}, gear), user: p.username, monster: m.key });
+      IC.store.set('dpsMonster', m.key);
       document.querySelector('[data-tab="dps"]').click();
     };
   },
