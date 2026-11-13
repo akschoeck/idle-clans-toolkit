@@ -2,7 +2,7 @@
 IC.data = { game: null, names: null, prices: new Map(), summary: new Map(), profile: null, ranks: null, holiday: null };
 IC.GOLD = 19;
 const MIN = 60000, HOUR = 3600000;
-const GAME_V = 9; // bump when slimGame's output shape changes, so cached copies are rebuilt
+const GAME_V = 10; // bump when slimGame's output shape changes, so cached copies are rebuilt
 
 // ---------- game config ----------
 // The endpoint returns MongoDB shell-style JSON (ObjectId("...") etc.), so it is cleaned before parsing.
@@ -28,6 +28,15 @@ function normLoot(list, scale = 1, relative = false) {
   });
 }
 
+// Mastery capes: one skill's boost, or every combat skill's for the completionist cape of the same tier.
+function capeBoost(i) {
+  const b = i.SkillBoost;
+  if (b && b.BoostPercentage > 0 && b.Skill >= 1 && b.Skill <= 5) return { [IC.skillById(b.Skill)]: b.BoostPercentage };
+  const t = /^completionist_cape_tier_(\d)$/.exec(i.Name || '');
+  if (t) { const pct = 5 * +t[1]; return { attack: pct, strength: pct, defence: pct, archery: pct, magic: pct }; }
+  return null;
+}
+
 function slimGame(g) {
   const items = [];
   for (const i of g.Items.Items) {
@@ -35,6 +44,11 @@ function slimGame(g) {
       id: i.ItemId, key: i.Name, base: i.BaseValue || 0, noShop: !!i.CanNotBeSoldToGameShop, noTrade: !!i.CanNotBeTraded,
       buyLimit: i.PlayerMarketBuyLimit || 0, dead: !!(i.Discontinued || i.Unobtainable), twoHanded: !!i.TwoHanded,
       interval: i.AttackInterval || 0, style: i.Style || 0, heal: i.HealthAppliedOnConsume || 0, req: i.LevelRequirement && i.LevelRequirement.Level ? { skill: IC.skillById(i.LevelRequirement.Skill), level: i.LevelRequirement.Level } : null,
+      // Conditional combat bonuses. weakBoost: % extra against regular monsters weak to the weapon's style. questBoost: % extra
+      // against quest monsters. vs: % extra damage against the listed monster ids. cape: mastery cape boost per skill.
+      weakBoost: i.ExtraBoostAgainstWeakEnemiesPercentage || 0, questBoost: i.ExtraBoostPercentageAgainstQuestMonsters || 0,
+      vs: i.WeaponMonsterWeakness && i.WeaponMonsterWeakness.DamageBoost > 0 && (i.WeaponMonsterWeakness.WeakMonsters || []).length ? { boost: i.WeaponMonsterWeakness.DamageBoost, ids: i.WeaponMonsterWeakness.WeakMonsters } : null,
+      cape: capeBoost(i),
       stats: {
         str: i.StrengthBonus || 0, acc: i.AccuracyBonus || 0, aStr: i.ArcheryStrengthBonus || 0, aAcc: i.ArcheryAccuracyBonus || 0,
         mStr: i.MagicStrengthBonus || 0, mAcc: i.MagicAccuracyBonus || 0, def: i.DefenceBonus || 0, aDef: i.ArcheryDefenceBonus || 0, mDef: i.MagicDefenceBonus || 0,
@@ -93,6 +107,8 @@ function slimGame(g) {
   const shop = {};
   for (const s of g.ShopItems.Items) if (s.ShopType === 0 && s.RewardType === 0 && s.Cost > 0) shop[s.EntityId] = s.Cost;
   const S = g.SharedSettings.Settings;
+  const potion = {}; // effect strength (%) by potion item key
+  for (const i of g.Items.Items) { const d = i.PotionType ? ((g.PotionData || {}).Items || []).find((x) => x.PotionType === i.PotionType) : null; if (d) potion[i.Name] = d.EffectStrengthPercentage || 0; }
   return {
     v: GAME_V, items, tasks, monsters, shop,
     upgrades: g.Upgrades.Items.filter((u) => !u.Discontinued).map((u) => ({
@@ -100,7 +116,7 @@ function slimGame(g) {
       itemCosts: (u.ItemCosts || []).map((c) => ({ id: c.Item, amt: c.Amount })),
       reqs: (u.SkillRequirements || []).map((r) => ({ skill: IC.skillById(r.Skill), levels: r.Requirements || [] })),
     })),
-    settings: { tax: S.PlayerShopTaxPercentage, offlineBase: S.BaseOfflineProgressCapHours, offlinePremium: S.OfflineHoursFromPremium, respawnMs: S.EnemyRespawnTimeMS, eventXp: S.CombatExperienceEventExpMultiplier || 6, unarmedMs: S.UnarmedAttackSpeedMS || 3600, weakDef: S.CombatNpcWeaknessDefenceReductionPct || 20, weakDmg: S.CombatNpcWeaknessDamageBoostPct || 20, version: S.ConfigVersion },
+    settings: { tax: S.PlayerShopTaxPercentage, offlineBase: S.BaseOfflineProgressCapHours, offlinePremium: S.OfflineHoursFromPremium, respawnMs: S.EnemyRespawnTimeMS, eventXp: S.CombatExperienceEventExpMultiplier || 6, unarmedMs: S.UnarmedAttackSpeedMS || 3600, weakDef: S.CombatNpcWeaknessDefenceReductionPct || 20, weakDmg: S.CombatNpcWeaknessDamageBoostPct || 20, potion, version: S.ConfigVersion },
   };
 }
 

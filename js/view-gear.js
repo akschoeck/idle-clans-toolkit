@@ -6,7 +6,7 @@ IC.STYLES = {
   defence: { label: 'Defence', score: (s) => s.def + s.aDef + s.mDef },
 };
 // Player-profile keys for the gold upgrades, matched to the game's upgrade enum by order.
-IC.UPGRADE_KEYS = { 0: 'housing', 1: 'keepItSpacious', 2: 'theLumberjack', 3: 'theFisherman', 4: 'autoEating', 5: 'autoLooting', 6: 'offlineProgress', 8: 'farmingTrickery', 9: 'powerForager', 10: 'smeltingMagic', 11: 'mostEfficientFisherman', 12: 'plankBargain', 13: 'ammo-saver', 15: 'teamwork' };
+IC.UPGRADE_KEYS = { 0: 'housing', 1: 'keepItSpacious', 2: 'theLumberjack', 3: 'theFisherman', 4: 'autoEating', 5: 'autoLooting', 6: 'offlineProgress', 8: 'farmingTrickery', 9: 'powerForager', 10: 'smeltingMagic', 11: 'mostEfficientFisherman', 12: 'plankBargain', 13: 'ammo-saver', 15: 'monsterHunter', 24: 'teamwork' };
 
 IC.views.gear = {
   label: 'Gear',
