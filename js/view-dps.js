@@ -56,9 +56,13 @@ IC.combat = (() => {
     const theirs = { melee: [m.s.accB, m.s.att, m.s.strB, m.s.str], archery: [m.s.aAccB, m.s.arch, m.s.aStrB, m.s.arch], magic: [m.s.mAccB, m.s.mag, m.s.mStrB, m.s.mag] }[eType];
     const myDef = aug({ melee: tot.def, archery: tot.aDef, magic: tot.mDef }[eType], L('defence'));
     const eHit = chance(aug(theirs[0], theirs[1]), myDef) * ENEMY_HIT_FACTOR, eMax = maxHit(theirs[2], theirs[3]);
+    const dodge = Math.min(L('agility'), 120) * 0.0018;
+    // Damage you take: the enemy only attacks while it is alive, so the respawn wait is excluded.
+    const fightShare = isFinite(secs) ? (secs - respawn) / secs : 1;
+    const takenHr = fightShare * 3600 / (m.interval / 1000) * eHit * (1 - dodge) * eMax / 2;
     return {
-      tot, weapon, style, type, weak, interval, hit, max, secs, kills, dps: isFinite(secs) ? m.hp / secs : 0, dmgHr: isFinite(dmgHr) ? dmgHr : 0,
-      dodge: Math.min(L('agility'), 120) * 0.0018,
+      tot, weapon, style, type, weak, interval, hit, max, secs, respawn, kills: isFinite(kills) ? kills : 0, dps: isFinite(secs) ? m.hp / secs : 0, dmgHr: isFinite(dmgHr) ? dmgHr : 0,
+      dodge, takenHr,
       enemy: { type: eType, hit: eHit, max: eMax, dps: eHit * eMax / 2 / (m.interval / 1000) },
     };
   }
@@ -74,6 +78,59 @@ IC.views.dps = {
   slotLabel(s) { return this.SLOT_LABEL[s] || IC.pretty(s); },
   worn() { return Object.assign({}, (IC.data.profile && IC.data.profile.equipment) || {}); },
   monster() { const ms = IC.data.game.monsters; return ms.find((m) => m.key === this.state.monster) || ms[0]; },
+  // Gear the calculators should use: whatever is set up on this tab for the loaded character, else what is worn.
+  gearFor() { const st = this.state, p = IC.data.profile; return st.gear && p && st.user === p.username ? st.gear : this.worn(); },
+  gearChanged() { const g = this.gearFor(), w = this.worn(); return Object.keys(Object.assign({}, g, w)).some((k) => (g[k] == null ? -1 : g[k]) !== (w[k] == null ? -1 : w[k])); },
+  loot(m, r) {
+    const shop = IC.lootValue(m.loot, 'shop').total, market = IC.lootValue(m.loot).total, key = m.keyId != null ? IC.buyCost(m.keyId) || 0 : 0;
+    return { shop, market, key, shopHr: shop * r.kills, marketHr: (market - key) * r.kills };
+  },
+  // The two result cards ("Your stats" and the enemy), shared with the monster dialog on the Combat tab.
+  statsHtml(r, m, lootLink) {
+    const C = IC.combat, L = IC.levels, lv = this.loot(m, r);
+    const row = (label, value, title) => `<tr title="${esc(title || '')}"><td class="muted">${label}</td><td class="num"><b>${value}</b></td></tr>`;
+    const why = (label) => (lootLink ? `<button class="link" data-lootinfo title="Show how this is worked out">${label}</button>` : label);
+    return `<div class="cols">
+      <div class="card"><h3>Your stats</h3><table><tbody>
+        ${row('Hit chance', fmt.pct(r.hit, 2))}
+        ${row('Dodge chance', fmt.pct(r.dodge, 2), '0.18% per Agility level')}
+        ${row('Max hit', fmt.int(r.max) + (r.weak ? '<span class="tag good">weakness</span>' : ''))}
+        ${row('DPS', fmt.dec(r.dps, 2), 'Damage per second including the respawn wait and damage wasted on the killing blow')}
+        ${row('Estimated kills per hour', fmt.int(Math.floor(r.kills)), `${fmt.dec(r.secs, 1)} seconds per kill including respawn`)}
+        ${row('Mixed exp per hour', fmt.int(r.dmgHr * 4 / 3), 'Per skill on the Mixed style. Total combat XP is 4 per damage, plus 1 per damage to Health.')}
+        ${row('Total combat exp per hour', fmt.int(r.dmgHr * 4))}
+        ${row('Health exp per hour', fmt.int(r.dmgHr))}
+        ${row(why('Loot per hour, base sell value'), fmt.int(lv.shopHr))}
+        ${row(why('Loot per hour, player market'), fmt.int(lv.marketHr), lv.key ? `After ${fmt.short(lv.key)} per kill for the key` : '')}
+      </tbody></table>
+      <p class="muted small">${esc(IC.pretty(r.type))} attack${r.weapon ? ` with ${esc(IC.itemName(r.weapon.id))}` : ', unarmed'} every ${fmt.dec(r.interval / 1000, 2)}s${r.style ? ` (${C.STYLE[r.style]})` : ''}. Levels used: Attack ${L.attack}, Strength ${L.strength}, Defence ${L.defence}, Archery ${L.archery}, Magic ${L.magic}, Agility ${L.agility}.${lootLink ? ' Click a loot line to see how it is worked out.' : ''}</p></div>
+      <div class="card"><h3>${esc(IC.pretty(m.key))} <span class="muted small">Lvl ${m.lvl} · ${fmt.int(m.hp)} HP</span></h3><table><tbody>
+        ${row('Hit chance', fmt.pct(r.enemy.hit, 2))}
+        ${row('Max hit', fmt.int(r.enemy.max))}
+        ${row('DPS', fmt.dec(r.enemy.dps, 4), 'Approximate, before your dodge chance')}
+        ${row('Weakness', C.STYLE[m.weak] || 'None')}
+        ${row('Attack style', esc(IC.pretty(r.enemy.type)))}
+        ${row('Attack / Strength / Defence', `${m.s.att} / ${m.s.str} / ${m.s.def}`)}
+        ${row('Archery / Magic', `${m.s.arch} / ${m.s.mag}`)}
+      </tbody></table></div></div>`;
+  },
+  foods() { return IC.data.game.items.filter((i) => i && i.heal > 0 && !i.dead).sort((a, b) => a.heal - b.heal); },
+  foodHtml(r, m) {
+    const foods = this.foods(); if (!foods.length) return '';
+    const saved = IC.store.get('dpsFood', null), food = foods.find((f) => f.id === saved) || foods[Math.floor(foods.length / 2)];
+    const perHr = r.takenHr / food.heal, price = food.noTrade ? null : IC.buyCost(food.id), lv = this.loot(m, r);
+    const row = (label, value, title) => `<tr title="${esc(title || '')}"><td class="muted">${label}</td><td class="num"><b>${value}</b></td></tr>`;
+    return `<div class="card"><h3>Food</h3>
+      <div class="controls"><label>Food <select id="dFood">${foods.map((f) => `<option value="${f.id}" ${f.id === food.id ? 'selected' : ''}>${esc(IC.itemName(f.id))} (heals ${fmt.int(f.heal)})</option>`).join('')}</select></label></div>
+      <table><tbody>
+        ${row('Damage taken per hour', fmt.dec(r.takenHr, 1), 'Enemy hit chance × chance you fail to dodge × average hit × its attacks per hour while it is alive')}
+        ${row(`${esc(IC.itemName(food.id))} eaten per hour`, fmt.dec(perHr, perHr < 10 ? 2 : 1), `Damage taken ÷ ${fmt.int(food.heal)} health per piece`)}
+        ${row('One piece lasts', perHr > 0 ? IC.fmt.hours(1 / perHr) : '–')}
+        ${row('Food cost per hour', price == null ? 'no price' : fmt.int(perHr * price), price == null ? '' : `${fmt.int(price)} gold each at the cheapest current offer`)}
+        ${price == null ? '' : row('Market loot per hour after food', `<span class="${lv.marketHr - perHr * price >= 0 ? 'good' : 'bad'}">${fmt.int(lv.marketHr - perHr * price)}</span>`)}
+      </tbody></table>
+      <p class="muted small">Long-run average. It assumes every point of healing is used; eating at high health wastes some, so real use is a little higher. Enemy average damage is taken as half its max hit.</p></div>`;
+  },
   render(el) {
     const p = IC.data.profile, st = this.state;
     if (!p) { el.innerHTML = `<h2>DPS calculator</h2>${IC.ui.needUser()}`; return; }
@@ -133,33 +190,11 @@ IC.views.dps = {
       <div><b>Archery</b> Strength: ${r.tot.aStr} | Accuracy: ${r.tot.aAcc} | Defence: ${r.tot.aDef}</div>
       <div><b>Magic</b> Strength: ${r.tot.mStr} | Accuracy: ${r.tot.mAcc} | Defence: ${r.tot.mDef}</div></div>`;
 
-    const shop = IC.lootValue(m.loot, 'shop').total, market = IC.lootValue(m.loot).total;
-    const key = m.keyId != null ? IC.buyCost(m.keyId) || 0 : 0;
-    const row = (label, value, title) => `<tr title="${esc(title || '')}"><td class="muted">${label}</td><td class="num"><b>${value}</b></td></tr>`;
-    const L = IC.levels;
-    el.querySelector('#dOut').innerHTML = `<div class="cols">
-      <div class="card"><h3>Your stats</h3><table><tbody>
-        ${row('Hit chance', fmt.pct(r.hit, 2))}
-        ${row('Dodge chance', fmt.pct(r.dodge, 2), '0.18% per Agility level')}
-        ${row('Max hit', fmt.int(r.max) + (r.weak ? '<span class="tag good">weakness</span>' : ''))}
-        ${row('DPS', fmt.dec(r.dps, 2), 'Damage per second including the respawn wait and damage wasted on the killing blow')}
-        ${row('Estimated kills per hour', fmt.int(Math.floor(r.kills)), `${fmt.dec(r.secs, 1)} seconds per kill including respawn`)}
-        ${row('Mixed exp per hour', fmt.int(r.dmgHr * 4 / 3), 'Per skill on the Mixed style. Total combat XP is 4 per damage, plus 1 per damage to Health.')}
-        ${row('Total combat exp per hour', fmt.int(r.dmgHr * 4))}
-        ${row('Health exp per hour', fmt.int(r.dmgHr))}
-        ${row('Loot per hour, base sell value', fmt.int(shop * r.kills))}
-        ${row('Loot per hour, player market', fmt.int((market - key) * r.kills), key ? `After ${fmt.short(key)} per kill for the key` : '')}
-      </tbody></table>
-      <p class="muted small">${esc(IC.pretty(r.type))} attack${r.weapon ? ` with ${esc(IC.itemName(r.weapon.id))}` : ', unarmed'} every ${fmt.dec(r.interval / 1000, 2)}s${r.style ? ` (${C.STYLE[r.style]})` : ''}. Levels used: Attack ${L.attack}, Strength ${L.strength}, Defence ${L.defence}, Archery ${L.archery}, Magic ${L.magic}, Agility ${L.agility}.</p></div>
-      <div class="card"><h3>${esc(IC.pretty(m.key))} <span class="muted small">Lvl ${m.lvl} · ${fmt.int(m.hp)} HP</span></h3><table><tbody>
-        ${row('Hit chance', fmt.pct(r.enemy.hit, 2))}
-        ${row('Max hit', fmt.int(r.enemy.max))}
-        ${row('DPS', fmt.dec(r.enemy.dps, 4), 'Approximate, before your dodge chance')}
-        ${row('Weakness', C.STYLE[m.weak] || 'None')}
-        ${row('Attack style', esc(IC.pretty(r.enemy.type)))}
-        ${row('Attack / Strength / Defence', `${m.s.att} / ${m.s.str} / ${m.s.def}`)}
-        ${row('Archery / Magic', `${m.s.arch} / ${m.s.mag}`)}
-      </tbody></table></div></div>`;
+    const out = el.querySelector('#dOut');
+    out.innerHTML = this.statsHtml(r, m, true) + this.foodHtml(r, m);
+    out.onclick = (e) => { if (e.target.closest('[data-lootinfo]')) IC.views.combat.lootDialog(m.key); };
+    const food = out.querySelector('#dFood');
+    if (food) food.onchange = () => { IC.store.set('dpsFood', +food.value); this.draw(el); };
   },
   // Dialog listing every item for a slot, ranked by the DPS it would give against the selected enemy.
   picker(el, slot) {

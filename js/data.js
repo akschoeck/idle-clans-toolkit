@@ -2,7 +2,7 @@
 IC.data = { game: null, names: null, prices: new Map(), summary: new Map(), profile: null, ranks: null, holiday: null };
 IC.GOLD = 19;
 const MIN = 60000, HOUR = 3600000;
-const GAME_V = 6; // bump when slimGame's output shape changes, so cached copies are rebuilt
+const GAME_V = 7; // bump when slimGame's output shape changes, so cached copies are rebuilt
 
 // ---------- game config ----------
 // The endpoint returns MongoDB shell-style JSON (ObjectId("...") etc.), so it is cleaned before parsing.
@@ -34,7 +34,7 @@ function slimGame(g) {
     items[i.ItemId] = {
       id: i.ItemId, key: i.Name, base: i.BaseValue || 0, noShop: !!i.CanNotBeSoldToGameShop, noTrade: !!i.CanNotBeTraded,
       buyLimit: i.PlayerMarketBuyLimit || 0, dead: !!(i.Discontinued || i.Unobtainable), twoHanded: !!i.TwoHanded,
-      interval: i.AttackInterval || 0, style: i.Style || 0, req: i.LevelRequirement && i.LevelRequirement.Level ? { skill: IC.skillById(i.LevelRequirement.Skill), level: i.LevelRequirement.Level } : null,
+      interval: i.AttackInterval || 0, style: i.Style || 0, heal: i.HealthAppliedOnConsume || 0, req: i.LevelRequirement && i.LevelRequirement.Level ? { skill: IC.skillById(i.LevelRequirement.Skill), level: i.LevelRequirement.Level } : null,
       stats: {
         str: i.StrengthBonus || 0, acc: i.AccuracyBonus || 0, aStr: i.ArcheryStrengthBonus || 0, aAcc: i.ArcheryAccuracyBonus || 0,
         mStr: i.MagicStrengthBonus || 0, mAcc: i.MagicAccuracyBonus || 0, def: i.DefenceBonus || 0, aDef: i.ArcheryDefenceBonus || 0, mDef: i.MagicDefenceBonus || 0,
