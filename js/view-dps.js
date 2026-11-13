@@ -97,6 +97,7 @@ IC.views.dps = {
         ${row('Max hit', fmt.int(r.max) + (r.weak ? '<span class="tag good">weakness</span>' : ''))}
         ${row('DPS', fmt.dec(r.dps, 2), 'Damage per second including the respawn wait and damage wasted on the killing blow')}
         ${row('Estimated kills per hour', fmt.int(Math.floor(r.kills)), `${fmt.dec(r.secs, 1)} seconds per kill including respawn`)}
+        ${row('Average kill time', isFinite(r.secs) ? `${fmt.dec(r.secs - r.respawn, 1)}s` : '–', `Fighting time only. With the ${fmt.dec(r.respawn, 2)}s respawn wait it is ${fmt.dec(r.secs, 1)}s per kill. This is the number the Combat tab's "My average kill time" box expects.`)}
         ${row('Mixed exp per hour', fmt.int(r.dmgHr * 4 / 3), 'Per skill on the Mixed style. Total combat XP is 4 per damage, plus 1 per damage to Health.')}
         ${row('Total combat exp per hour', fmt.int(r.dmgHr * 4))}
         ${row('Health exp per hour', fmt.int(r.dmgHr))}

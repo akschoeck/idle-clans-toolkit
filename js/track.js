@@ -27,7 +27,8 @@
   const setUser = IC.setUser;
   IC.setUser = async function (name) { const r = await setUser.apply(this, arguments); track(name ? 'load character' : 'forget character', name || ''); return r; };
 
-  const label = (el) => { const l = el.closest('label'); return (l ? l.textContent.trim().split('\n')[0].trim().slice(0, 30) : '') || el.id || el.name || el.type; };
+  // The label's own words only (its text nodes), not the text of the options inside a dropdown.
+  const label = (el) => { const l = el.closest('label'); return (l ? [...l.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join(' ').replace(/\s+/g, ' ').trim().slice(0, 30) : '') || el.id || el.name || el.type; };
   document.addEventListener('click', (e) => {
     const t = e.target.closest('[data-tab],[data-item],[data-mon],[data-task],[data-pick],[data-forget],#userKeep');
     if (!t) return;
