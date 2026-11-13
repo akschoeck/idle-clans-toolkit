@@ -17,7 +17,7 @@ IC.views.money = {
         <input type="search" id="mQ" placeholder="Search task…" value="${esc(st.q)}">
       </div>
       <div id="mTable"></div>
-      <p class="muted small">Speed and XP boosts come from Settings (currently +${IC.settings.speedBoost}% speed, +${IC.settings.xpBoost}% XP). Plundering uses the base success chance. "Thin" means the weekly market volume is smaller than one day of your output, so the price will not hold if you sell in bulk.</p>`;
+      <p class="muted small">Speed and XP boosts come from Settings (currently +${IC.settings.speedBoost}% speed, +${IC.settings.xpBoost}% XP). Plundering loot is scaled by your success chance, which rises with the levels of each task's advantage skills${IC.levels ? '' : ' (base chance shown until a username is set)'}. "Thin" means the weekly market volume is smaller than one day of your output, so the price will not hold if you sell in bulk.</p>`;
     const $ = (id) => el.querySelector(id);
     $('#mSkill').value = st.skill; $('#mDoable').checked = st.doable && !!IC.levels; $('#mDoable').disabled = !IC.levels; $('#mThin').checked = st.hideThin;
     const draw = () => {
@@ -29,7 +29,7 @@ IC.views.money = {
         rows, sort: 7, limit: 50, rowClass: (r) => (r.can.ok ? '' : 'locked'), empty: 'No tasks match these filters.',
         cols: [
           { label: 'Task', val: (r) => IC.taskName(r.task), html: (r) => (r.task.mainOut != null ? IC.ui.itemLink(r.task.mainOut) : esc(IC.taskName(r.task)))
-            + (r.thin ? '<span class="tag warn">thin</span>' : '') + (r.shopSold ? '<span class="tag">shop</span>' : '') + (r.task.success ? `<span class="tag">${Math.round(r.task.success * 100)}% success</span>` : '')
+            + (r.thin ? '<span class="tag warn">thin</span>' : '') + (r.shopSold ? '<span class="tag">shop</span>' : '') + (r.success != null ? `<span class="tag" title="Rises with your ${esc(r.task.adv.map((a) => IC.skillName(a.skill) + ' (cap ' + a.cap + ')').join(', '))} levels">${fmt.dec(r.success * 100, 1)}% success</span>` : '')
             + (r.can.ok ? '' : `<span class="tag warn">needs ${esc(IC.ui.reqText(r.can.missing))}</span>`) },
           { label: 'Skill', val: (r) => IC.skillName(r.task.skill) },
           { label: 'Lvl', num: true, val: (r) => r.task.level, html: (r) => r.task.level },

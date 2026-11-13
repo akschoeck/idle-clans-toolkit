@@ -2,6 +2,7 @@
 IC.data = { game: null, names: null, prices: new Map(), summary: new Map(), profile: null, ranks: null, holiday: null };
 IC.GOLD = 19;
 const MIN = 60000, HOUR = 3600000;
+const GAME_V = 2; // bump when slimGame's output shape changes, so cached copies are rebuilt
 
 // ---------- game config ----------
 // The endpoint returns MongoDB shell-style JSON (ObjectId("...") etc.), so it is cleaned before parsing.
@@ -53,16 +54,20 @@ function slimGame(g) {
         }
         if (!(t.BaseTime > 0)) continue; // enchanting scrolls etc. have no fixed cycle
         const skill = IC.skillById(t.Skill) || skillName.toLowerCase();
-        const success = t.BaseSuccessChancePercentage > 0 ? t.BaseSuccessChancePercentage / 100 : 1;
+        // Plundering only pays out on a successful attempt; the chance depends on the player (see IC.successChance).
+        const plunder = (t.PlunderingLoot || []).length > 0;
         const out = [];
         if (t.ItemReward >= 0 && t.ItemAmount > 0) out.push({ id: t.ItemReward, amt: t.ItemAmount });
-        for (const l of normLoot(t.PlunderingLoot, success).concat(normLoot(t.Loot))) out.push({ id: l.id, amt: l.chance * l.avg, chance: l.chance });
+        for (const l of normLoot(t.PlunderingLoot)) out.push({ id: l.id, amt: l.chance * l.avg, chance: l.chance, gated: true });
+        for (const l of normLoot(t.Loot)) out.push({ id: l.id, amt: l.chance * l.avg, chance: l.chance });
         const reqs = [{ skill, level: t.LevelRequirement || 1 }];
         for (const r of t.AdditionalLevelRequirements || []) reqs.push({ skill: IC.skillById(r.Skill), level: r.Level });
         if (t.MagicLevelRequirement > 0) reqs.push({ skill: 'magic', level: t.MagicLevelRequirement });
         tasks.push({
           uid: skillName + ':' + t.TaskId + ':' + t.Name, key: t.Name, skill, group: skillName, level: t.LevelRequirement || 1, reqs, time: t.BaseTime, xp: t.ExpReward || 0,
-          out, costs: (t.Costs || []).map((c) => ({ id: c.Item, amt: c.Amount })), success: success < 1 ? success : null, mainOut: t.ItemReward >= 0 ? t.ItemReward : null,
+          out, costs: (t.Costs || []).map((c) => ({ id: c.Item, amt: c.Amount })), mainOut: t.ItemReward >= 0 ? t.ItemReward : null,
+          baseSuccess: plunder ? (t.BaseSuccessChancePercentage || 0) / 100 : null,
+          adv: plunder ? (t.SkillAdvantages || []).map((a) => ({ skill: IC.skillById(a.Skill), cap: a.LevelCap })).filter((a) => a.skill && a.cap > 0) : [],
         });
       }
     }
@@ -71,7 +76,7 @@ function slimGame(g) {
   for (const s of g.ShopItems.Items) if (s.ShopType === 0 && s.RewardType === 0 && s.Cost > 0) shop[s.EntityId] = s.Cost;
   const S = g.SharedSettings.Settings;
   return {
-    items, tasks, monsters, shop,
+    v: GAME_V, items, tasks, monsters, shop,
     upgrades: g.Upgrades.Items.filter((u) => !u.Discontinued).map((u) => ({
       type: u.Type, tiers: u.Tiers || 0, bulk: !!u.CanPurchaseInBulk, names: u.TierNameLocKeys || [], values: u.TierUnlocks || [], costs: u.Costs || [],
       itemCosts: (u.ItemCosts || []).map((c) => ({ id: c.Item, amt: c.Amount })),
@@ -89,7 +94,7 @@ IC.loadBase = async function (force) {
     IC.api('/Items/metadata', { ttl: 24 * HOUR }),
     IC.api('/PlayerMarket/items/prices/latest?includeAveragePrice=true', { ttl: 5 * MIN, force }),
   ]);
-  D.game = game;
+  D.game = game.v === GAME_V ? game : await IC.api('/Configuration/game-data', { ttl: 12 * HOUR, text: true, transform: parseGameData, force: true });
   D.names = new Map(meta.map((m) => [m.id, m]));
   D.prices = new Map(prices.map((p) => [p.itemId, p]));
   D.pricesTime = Date.now();
@@ -99,7 +104,11 @@ IC.loadBase = async function (force) {
     D.summary = new Map(Object.values(sum).map((s) => {
       let v = 0, pv = 0;
       (s.prices || []).forEach((p, i) => { const vol = (s.volumes || [])[i] || 0; v += vol; pv += p * vol; });
-      return [s.itemId, { vol7: s.tradeVolume || 0, avg7: v ? pv / v : 0, last: s.lastTradeTimestamp, prices: s.prices || [] }];
+      // Volume-weighted median: unlike the averages, one absurd trade cannot move it.
+      const pts = (s.prices || []).map((p, i) => [p, (s.volumes || [])[i] || 0]).filter((x) => x[1] > 0).sort((a, b) => a[0] - b[0]);
+      let med7 = 0, acc = 0;
+      for (const [p, vol] of pts) { acc += vol; if (acc >= v / 2) { med7 = p; break; } }
+      return [s.itemId, { vol7: s.tradeVolume || 0, avg7: v ? pv / v : 0, med7, last: s.lastTradeTimestamp, prices: s.prices || [] }];
     }));
   } catch (e) { D.summaryError = e.message; }
 };
@@ -159,7 +168,11 @@ IC.sellValue = function (id, mode) {
   if (it && !it.noTrade) {
     if (mode === 'instant') market = p ? p.highestBuyPrice || 0 : 0;
     else if (mode === 'list') market = p ? p.lowestSellPrice || p.dailyAveragePrice || 0 : 0;
-    else if (mode === 'avg') market = (p && p.dailyAveragePrice) || (s && s.avg7) || (p && p.lowestSellPrice) || 0;
+    else if (mode === 'avg') {
+      market = (p && p.dailyAveragePrice) || (s && s.avg7) || (p && p.lowestSellPrice) || 0;
+      // A single outlier trade can inflate the averages a thousandfold; fall back to the 7-day median then.
+      if (s && s.med7 > 0 && market > s.med7 * 3) market = s.med7;
+    }
   }
   const net = market * IC.taxMult();
   if (mode === 'shop' || shop >= net) return shop > 0 ? { value: shop, src: 'shop' } : (net > 0 ? { value: net, src: 'market' } : null);
@@ -173,8 +186,17 @@ IC.canDo = function (task) {
   const missing = task.reqs.filter((r) => r.skill && (IC.levels[r.skill] || 1) < r.level);
   return { ok: !missing.length, missing };
 };
+// Plundering success chance (0..1), or null for tasks that cannot fail.
+// Fitted to in-game values: base + (100% - base) × average of level/cap over the task's advantage skills.
+IC.successChance = function (task) {
+  if (task.baseSuccess == null) return null;
+  if (!IC.levels || !task.adv.length) return task.baseSuccess;
+  const f = task.adv.reduce((a, x) => a + Math.min(IC.levels[x.skill] || 1, x.cap) / x.cap, 0) / task.adv.length;
+  return task.baseSuccess + (1 - task.baseSuccess) * f;
+};
 IC.calcTask = function (task, mode) {
   const S = IC.settings;
+  const success = IC.successChance(task);
   const perHr = (HOUR / task.time) * (1 + (S.speedBoost || 0) / 100);
   const xpHr = task.xp * perHr * (1 + (S.xpBoost || 0) / 100);
   let cost = 0, rev = 0, unknownIn = false, unknownOut = false, shopSold = false, minVolRatio = Infinity;
@@ -185,7 +207,7 @@ IC.calcTask = function (task, mode) {
   for (const o of task.out) {
     const v = IC.sellValue(o.id, mode);
     if (!v) { if (o.id === task.mainOut) unknownOut = true; continue; }
-    rev += v.value * o.amt;
+    rev += v.value * o.amt * (o.gated ? success : 1);
     if (v.src === 'shop') shopSold = true;
     if (v.src === 'market' && o.id === task.mainOut) minVolRatio = Math.min(minVolRatio, IC.vol7(o.id) / (o.amt * perHr * 24));
   }
@@ -194,7 +216,7 @@ IC.calcTask = function (task, mode) {
   return {
     perHr, xpHr, costHr: cost * perHr, revHr: rev * perHr, profitHr: known ? profit * perHr : null, profitPer: known ? profit : null,
     goldPerXp: known && task.xp > 0 ? profit / (task.xp * (1 + (S.xpBoost || 0) / 100)) : null,
-    unknownIn, unknownOut, shopSold,
+    unknownIn, unknownOut, shopSold, success,
     // "thin": the whole market trades less of this in a week than you would make in a day
     thin: minVolRatio < 1, vol7: task.mainOut != null ? IC.vol7(task.mainOut) : null,
     can: IC.canDo(task),
