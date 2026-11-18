@@ -3,7 +3,7 @@
 IC.views.skilling = {
   label: 'Skilling',
   blurb: 'Completions, XP and loot per hour for your current task or any other, and how long a target level will take.',
-  state: { user: null, uid: null, target: {} },
+  state: { user: null, uid: null, target: {}, doable: false },
   // "5m 15s" style duration from hours.
   dur(hours) {
     if (hours == null || !isFinite(hours)) return '–';
@@ -40,6 +40,7 @@ IC.views.skilling = {
       </div>
       <div id="kOut"></div>
       <h3 style="margin-top:18px">Every task in this skill</h3>
+      <div class="controls"><label><input type="checkbox" id="kDoable" ${st.doable ? 'checked' : ''}> Only what I can do at my level</label></div>
       <div id="kTable"></div>
       <p class="muted small">The API does not report your active boosts, so enter the totals above (they are shared with Settings). Click a row to load that task. Plundering loot is scaled by your success chance. Ritual power is not available from the API.</p>`;
     const $ = (id) => el.querySelector(id);
@@ -48,6 +49,7 @@ IC.views.skilling = {
     $('#kTask').onchange = (e) => { st.uid = e.target.value; draw(); };
     const num = (id, key) => { $(id).onchange = (e) => { IC.settings[key] = Math.max(0, +e.target.value || 0); IC.saveSettings(); draw(); }; };
     num('#kSpeed', 'speedBoost'); num('#kXp', 'xpBoost');
+    $('#kDoable').onchange = (e) => { st.doable = e.target.checked; draw(); };
     if ($('#kUpdate')) $('#kUpdate').onclick = async () => {
       $('#kUpdate').disabled = true;
       try { await IC.loadProfile(IC.data.profile.username, true); } catch (e) { /* keep the copy we have */ }
@@ -117,13 +119,13 @@ IC.views.skilling = {
       </div></div>`;
     if ($('#kTarget')) $('#kTarget').onchange = (e) => { st.target[s] = Math.round(+e.target.value) || 0; this.draw(el); };
 
-    const rows = IC.allTaskRows().filter((x) => x.task.skill === s && x.task.xp > 0).map((x) => {
+    const rows = IC.allTaskRows().filter((x) => x.task.skill === s && x.task.xp > 0 && (!st.doable || x.can.ok)).map((x) => {
       const per = x.task.xp * (1 + (IC.settings.xpBoost || 0) / 100);
       const a1 = next.need > 0 ? Math.ceil(next.need / per) : 0, a2 = tp.need > 0 ? Math.ceil(tp.need / per) : 0;
       return Object.assign(x, { a1, h1: a1 / x.perHr, a2, h2: a2 / x.perHr });
     });
     IC.ui.table($('#kTable'), {
-      rows, sort: 3, limit: 60, rowClass: (x) => (x.can.ok ? '' : 'locked'), empty: 'This skill has no timed tasks in the game data.',
+      rows, sort: 3, limit: 60, rowClass: (x) => (x.can.ok ? '' : 'locked'), empty: st.doable ? 'Nothing in this skill is unlocked at your level yet.' : 'This skill has no timed tasks in the game data.',
       cols: [
         { label: 'Task', val: (x) => IC.taskName(x.task), html: (x) => `<button class="link" data-task="${esc(x.task.uid)}">${esc(IC.taskName(x.task))}</button>${x.task.uid === t.uid ? '<span class="tag good">selected</span>' : ''}${x.can.ok ? '' : `<span class="tag warn">needs ${esc(IC.ui.reqText(x.can.missing))}</span>`}` },
         { label: 'Lvl', num: true, val: (x) => x.task.level, html: (x) => x.task.level },
