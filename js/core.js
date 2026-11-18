@@ -65,7 +65,7 @@ IC.staleKeys = new Set();
     return run;
   }
   async function raw(path, asText) {
-    const res = await fetch(IC.API + path, { headers: { Accept: 'application/json' } });
+    const res = await fetch(IC.API + path, { headers: { Accept: 'application/json' }, cache: 'no-store' });
     if (res.status === 429) {
       const wait = res.headers.get('Retry-After');
       const err = new Error('Rate limited by the Idle Clans API' + (wait ? ` (retry in ${wait}s)` : '') + '.');

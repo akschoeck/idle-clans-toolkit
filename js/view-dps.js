@@ -168,7 +168,38 @@ IC.views.dps = {
   },
   monster() { const ms = IC.data.game.monsters; return ms.find((m) => m.key === this.state.monster) || ms[0]; },
   // Gear the calculators should use: whatever is set up on this tab for the loaded character, else what is worn.
-  gearFor() { const st = this.state, p = IC.data.profile; return st.gear && p && st.user === p.username ? st.gear : this.worn(); },
+  gearFor() { if (!IC.data.profile) return this.worn(); this.sync(); return this.state.gear; },
+  // Keeps the gear on this tab in step with the game: a new character starts from what is worn, and when the worn gear
+  // changes (seen after Refresh) every slot that was not changed by hand here takes the newly worn item.
+  sync() {
+    const st = this.state, p = IC.data.profile, worn = this.worn(), id = (v) => (v == null ? -1 : v);
+    if (!st.gear || st.user !== p.username) { st.gear = Object.assign({}, worn); st.user = p.username; st.base = worn; return; }
+    if (st.base) for (const s of Object.keys(Object.assign({}, worn, st.base))) if (id(worn[s]) !== id(st.base[s]) && id(st.gear[s]) === id(st.base[s])) st.gear[s] = worn[s];
+    st.base = worn;
+  },
+  // The gear table with its totals. bindGear makes the item names and Reset buttons work; after() redraws the page.
+  gearHtml(r) {
+    const st = this.state, items = IC.data.game.items, worn = this.worn(), C = IC.combat;
+    const twoH = r.weapon && r.weapon.twoHanded;
+    const slots = this.SLOTS.filter((s) => s in st.gear || s in worn).concat(Object.keys(st.gear).filter((s) => !this.SLOTS.includes(s)));
+    return `<div class="tablewrap"><table><tbody>${slots.map((slot) => {
+      const id = st.gear[slot], it = id >= 0 ? items[id] : null, changed = (worn[slot] == null ? -1 : worn[slot]) !== (id == null ? -1 : id);
+      const off = slot === 'leftHand' && twoH;
+      return `<tr><td class="muted">${esc(this.slotLabel(slot))}</td>
+        <td><button class="link" data-slot="${slot}" title="Choose a different item">${it ? esc(IC.itemName(id)) : '<span class="muted">empty</span>'}</button>${changed ? '<span class="tag warn">changed</span>' : ''}${off && it ? '<span class="tag">unused: two-handed weapon</span>' : ''}
+          ${it ? `<div class="muted small">${esc(this.bonusText(it, r.type))}${it.interval && slot === 'rightHand' ? ` · ${fmt.dec(it.interval / 1000, 2)}s ${C.STYLE[it.style] || ''}` : ''}</div>` : ''}</td>
+        <td class="num"><button class="ghost small" data-reset="${slot}" title="Set this slot back to what you are wearing" ${changed ? '' : 'disabled'}>Reset</button></td></tr>`;
+    }).join('')}</tbody></table></div>
+      <div class="dps-bonus"><div><b>Melee</b> Strength: ${r.tot.str} | Accuracy: ${r.tot.acc} | Defence: ${r.tot.def}</div>
+      <div><b>Archery</b> Strength: ${r.tot.aStr} | Accuracy: ${r.tot.aAcc} | Defence: ${r.tot.aDef}</div>
+      <div><b>Magic</b> Strength: ${r.tot.mStr} | Accuracy: ${r.tot.mAcc} | Defence: ${r.tot.mDef}</div></div>`;
+  },
+  bindGear(box, after) {
+    box.onclick = (e) => {
+      const pick = e.target.closest('[data-slot]'), re = e.target.closest('[data-reset]');
+      if (re) this.reset(re.dataset.reset, after); else if (pick) this.picker(pick.dataset.slot, after);
+    };
+  },
   gearChanged() { const g = this.gearFor(), w = this.worn(); return Object.keys(Object.assign({}, g, w)).some((k) => (g[k] == null ? -1 : g[k]) !== (w[k] == null ? -1 : w[k])); },
   loot(m, r) {
     const shop = IC.lootValue(m.loot, 'shop').total, market = IC.lootValue(m.loot).total, key = m.keyId != null ? IC.buyCost(m.keyId) || 0 : 0;
@@ -258,7 +289,7 @@ IC.views.dps = {
   render(el) {
     const p = IC.data.profile, st = this.state;
     if (!p) { el.innerHTML = `<h2>DPS calculator</h2>${IC.ui.needUser()}`; return; }
-    if (!st.gear || st.user !== p.username) { st.gear = this.worn(); st.user = p.username; }
+    this.sync();
     if (!st.monster) st.monster = IC.store.get('dpsMonster', '') || IC.data.game.monsters[0].key;
     const zones = [...new Set(IC.data.game.monsters.map((m) => m.zone))];
     el.innerHTML = `<h2>DPS calculator</h2>
@@ -273,22 +304,21 @@ IC.views.dps = {
       <p class="muted small">Formulas were matched against the in-game DPS panel for melee. Archery and magic use the same formulas with their own stats and have not been checked. Boosts are set in the Boosts card. Not included: Potion of dark magic, Bullseye, Royal extermination, clan boss boosts, lifesteal and the daily XP boost. Loot per hour is a long-run average and ignores food, deaths and boss mechanics.</p>`;
     el.querySelector('#dMon').value = this.monster().key;
     el.querySelector('#dMon').onchange = (e) => { st.monster = e.target.value; IC.store.set('dpsMonster', st.monster); this.draw(el); };
-    el.querySelector('#dReset').onclick = () => this.reset(el, null);
-    el.querySelector('#dGear').onclick = (e) => {
-      const pick = e.target.closest('[data-slot]'), re = e.target.closest('[data-reset]');
-      if (re) this.reset(el, re.dataset.reset); else if (pick) this.picker(el, pick.dataset.slot);
-    };
+    const redraw = () => { if (IC.currentView === 'dps') this.draw(el); };
+    el.querySelector('#dReset').onclick = () => this.reset(null, redraw);
+    this.bindGear(el.querySelector('#dGear'), redraw);
     IC.ui.bindSellMode(el, () => this.draw(el));
     this.draw(el);
   },
   // Re-fetch the profile, then restore one slot (or everything) to what is actually equipped.
-  async reset(el, slot) {
+  async reset(slot, after) {
     const st = this.state, name = IC.data.profile.username;
     try { await IC.loadProfile(name, true); } catch (e) { /* keep the copy we have */ }
     if (!IC.data.profile) return;
+    this.sync();
     const worn = this.worn();
     if (slot) st.gear[slot] = worn[slot]; else st.gear = worn;
-    if (IC.currentView === 'dps') this.draw(el);
+    after();
   },
   bonusText(it, type) {
     const s = it.stats, parts = [];
@@ -298,21 +328,9 @@ IC.views.dps = {
     return parts.join(' · ');
   },
   draw(el) {
-    const st = this.state, items = IC.data.game.items, m = this.monster(), worn = this.worn();
-    const r = IC.combat.calc(st.gear, IC.levels, m, this.opts()), C = IC.combat;
-    const twoH = r.weapon && r.weapon.twoHanded;
-    const slots = this.SLOTS.filter((s) => s in st.gear || s in worn).concat(Object.keys(st.gear).filter((s) => !this.SLOTS.includes(s)));
-    el.querySelector('#dGear').innerHTML = `<div class="tablewrap"><table><tbody>${slots.map((slot) => {
-      const id = st.gear[slot], it = id >= 0 ? items[id] : null, changed = (worn[slot] == null ? -1 : worn[slot]) !== (id == null ? -1 : id);
-      const off = slot === 'leftHand' && twoH;
-      return `<tr><td class="muted">${esc(this.slotLabel(slot))}</td>
-        <td><button class="link" data-slot="${slot}" title="Choose a different item">${it ? esc(IC.itemName(id)) : '<span class="muted">empty</span>'}</button>${changed ? '<span class="tag warn">changed</span>' : ''}${off && it ? '<span class="tag">unused: two-handed weapon</span>' : ''}
-          ${it ? `<div class="muted small">${esc(this.bonusText(it, r.type))}${it.interval && slot === 'rightHand' ? ` · ${fmt.dec(it.interval / 1000, 2)}s ${C.STYLE[it.style] || ''}` : ''}</div>` : ''}</td>
-        <td class="num"><button class="ghost small" data-reset="${slot}" title="Set this slot back to what you are wearing" ${changed ? '' : 'disabled'}>Reset</button></td></tr>`;
-    }).join('')}</tbody></table></div>
-      <div class="dps-bonus"><div><b>Melee</b> Strength: ${r.tot.str} | Accuracy: ${r.tot.acc} | Defence: ${r.tot.def}</div>
-      <div><b>Archery</b> Strength: ${r.tot.aStr} | Accuracy: ${r.tot.aAcc} | Defence: ${r.tot.aDef}</div>
-      <div><b>Magic</b> Strength: ${r.tot.mStr} | Accuracy: ${r.tot.mAcc} | Defence: ${r.tot.mDef}</div></div>`;
+    const st = this.state, m = this.monster();
+    const r = IC.combat.calc(st.gear, IC.levels, m, this.opts());
+    el.querySelector('#dGear').innerHTML = this.gearHtml(r);
 
     const out = el.querySelector('#dOut');
     out.innerHTML = this.statsHtml(r, m, true) + this.boostsHtml(r) + this.foodHtml(r, m) + this.bestHtml();
@@ -329,7 +347,7 @@ IC.views.dps = {
     if (food) food.onchange = () => { IC.store.set('dpsFood', +food.value); this.draw(el); };
   },
   // Dialog listing every item for a slot, ranked by the DPS it would give against the selected enemy.
-  picker(el, slot) {
+  picker(slot, after) {
     const st = this.state, items = IC.data.game.items, m = this.monster(), cur = st.gear[slot];
     const base = IC.combat.calc(st.gear, IC.levels, m, this.opts());
     const rows = [{ id: -1, it: null }];
@@ -364,7 +382,7 @@ IC.views.dps = {
       const b = e.target.closest('[data-pick]'); if (!b) return;
       st.gear[slot] = +b.dataset.pick;
       document.getElementById('dialog').close();
-      this.draw(el);
+      after();
     });
     show();
   },

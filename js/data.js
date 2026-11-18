@@ -2,7 +2,7 @@
 IC.data = { game: null, names: null, prices: new Map(), summary: new Map(), profile: null, ranks: null, holiday: null };
 IC.GOLD = 19;
 const MIN = 60000, HOUR = 3600000;
-const GAME_V = 11; // bump when slimGame's output shape changes, so cached copies are rebuilt
+const GAME_V = 12; // bump when slimGame's output shape changes, so cached copies are rebuilt
 
 // ---------- game config ----------
 // The endpoint returns MongoDB shell-style JSON (ObjectId("...") etc.), so it is cleaned before parsing.
@@ -109,8 +109,18 @@ function slimGame(g) {
   const S = g.SharedSettings.Settings;
   const potion = {}; // effect strength (%) by potion item key
   for (const i of g.Items.Items) { const d = i.PotionType ? ((g.PotionData || {}).Items || []).find((x) => x.PotionType === i.PotionType) : null; if (d) potion[i.Name] = d.EffectStrengthPercentage || 0; }
+  // Exterminating: each master hands out one of its assignments at random, by weight, among those the player's level allows.
+  const X = g.ExterminatingInfo || {};
+  const exterm = {
+    masters: (X.ExterminatingExperts || []).map((e) => ({
+      key: e.NameLocKey, difficulty: e.DifficultyLocKey, health: e.HealthLevelRequirement || 1, points: e.PointsPerAssignment || 0,
+      tasks: (e.Assignments || []).map((a) => ({ mon: a.MonsterName, req: a.LevelRequirement || 1, min: a.MinAmount || 1, max: Math.max(a.MaxAmount || 1, a.MinAmount || 1), weight: a.Weight || 0 })),
+    })),
+    shop: (X.ShopUnlocks || []).map((s) => ({ key: s.NameLocKey, cost: s.Cost || 0 })),
+    crate: normLoot(X.SupplyCrateLoot, 1, true),
+  };
   return {
-    v: GAME_V, items, tasks, monsters, shop,
+    v: GAME_V, items, tasks, monsters, shop, exterm,
     upgrades: g.Upgrades.Items.filter((u) => !u.Discontinued).map((u) => ({
       type: u.Type, tiers: u.Tiers || 0, bulk: !!u.CanPurchaseInBulk, names: u.TierNameLocKeys || [], values: u.TierUnlocks || [], costs: u.Costs || [],
       itemCosts: (u.ItemCosts || []).map((c) => ({ id: c.Item, amt: c.Amount })),
