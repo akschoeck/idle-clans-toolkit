@@ -215,9 +215,9 @@ IC.views.dps = {
     const rows = [];
     for (const m of IC.data.game.monsters) {
       if (m.lvl > maxLvl || m.event) continue;
-      const special = m.boss || m.keyId != null || m.zone === 'invocation';
+      const inv = m.zone === 'invocation', boss = !inv && (m.boss || m.keyId != null);
       const locked = m.zone === 'exterminating' && m.req > ext;
-      if ((special || locked) && !st.topAll) { hidden++; continue; }
+      if ((boss && !st.topBoss) || (inv && !st.topInv) || (locked && !st.topExt)) { hidden++; continue; }
       const r = IC.combat.calc(st.gear, IC.levels, m, this.opts());
       if (!(r.kills > 0)) continue;
       const foodCost = food && foodPrice != null ? (r.takenHr / food.heal) * foodPrice : 0;
@@ -231,9 +231,12 @@ IC.views.dps = {
     };
     return `<div class="card"><h3>Best enemies with this gear</h3>
       <div class="controls"><label title="Hide enemies above this level">Max level <input type="number" id="dTopMax" min="1" placeholder="any" value="${esc(st.topMax || '')}"></label>
-        <label><input type="checkbox" id="dTopAll" ${st.topAll ? 'checked' : ''}> Include bosses, Invocation enemies and Exterminating enemies I have not unlocked</label></div>
+        <span class="muted">Include:</span>
+        <label><input type="checkbox" data-top="topBoss" ${st.topBoss ? 'checked' : ''}> Bosses</label>
+        <label><input type="checkbox" data-top="topInv" ${st.topInv ? 'checked' : ''}> Invocation enemies</label>
+        <label><input type="checkbox" data-top="topExt" ${st.topExt ? 'checked' : ''}> Exterminating enemies I have not unlocked</label></div>
       <div class="cols">${list('xp', 'Top 10 by XP per hour', 'XP/hr')}${list('gold', 'Top 10 by gold per hour', 'Gold/hr')}</div>
-      <p class="muted small">Recalculated whenever you change a piece of gear. XP is total combat plus Health XP (5 per damage). Gold is market loot at the sell price chosen above${food && foodPrice != null ? `, less the cost of ${esc(IC.itemName(food.id))} eaten` : ''}. Click an enemy to load it above.${hidden && !st.topAll ? ` ${hidden} bosses, Invocation and locked Exterminating enemies are hidden.` : ''} It does not check whether you can survive the fight: watch the Food/hr column and the enemy's max hit.</p></div>`;
+      <p class="muted small">Recalculated whenever you change a piece of gear. XP is total combat plus Health XP (5 per damage). Gold is market loot at the sell price chosen above${food && foodPrice != null ? `, less the cost of ${esc(IC.itemName(food.id))} eaten` : ''}. Click an enemy to load it above.${hidden ? ` ${hidden} enemies are hidden by the unticked boxes above.` : ''} It does not check whether you can survive the fight: watch the Food/hr column and the enemy's max hit.</p></div>`;
   },
   foods() { return IC.data.game.items.filter((i) => i && i.heal > 0 && !i.dead).sort((a, b) => a.heal - b.heal); },
   foodHtml(r, m) {
@@ -318,9 +321,9 @@ IC.views.dps = {
       if (go) { st.monster = go.dataset.gotoMon; IC.store.set('dpsMonster', st.monster); el.querySelector('#dMon').value = st.monster; this.draw(el); el.querySelector('#dMon').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
       else if (e.target.closest('[data-lootinfo]')) IC.views.combat.lootDialog(m.key);
     };
-    const tMax = out.querySelector('#dTopMax'), tAll = out.querySelector('#dTopAll');
+    const tMax = out.querySelector('#dTopMax');
     if (tMax) tMax.onchange = () => { st.topMax = tMax.value; this.draw(el); };
-    if (tAll) tAll.onchange = () => { st.topAll = tAll.checked; this.draw(el); };
+    out.querySelectorAll('[data-top]').forEach((b) => { b.onchange = () => { st[b.dataset.top] = b.checked; this.draw(el); }; });
     out.querySelectorAll('[data-boost]').forEach((c) => { c.onchange = () => { const b = IC.store.get('dpsBoosts', {}); b[c.dataset.boost] = c.checked; IC.store.set('dpsBoosts', b); this.draw(el); }; });
     const food = out.querySelector('#dFood');
     if (food) food.onchange = () => { IC.store.set('dpsFood', +food.value); this.draw(el); };
