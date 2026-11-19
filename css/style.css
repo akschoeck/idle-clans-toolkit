@@ -39,6 +39,8 @@ button.ghost { background: transparent; color: var(--ink); border-color: var(--l
 button.link { background: none; border: none; color: var(--accent); padding: 0; font-weight: 500; text-align: left; }
 button:focus-visible, input:focus-visible, select:focus-visible, th:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* Header and tabs stay in view while scrolling, so characters can be switched from anywhere on a page. */
+@media (min-height: 480px) { .stick { position: sticky; top: 0; z-index: 20; } }
 .tabs { display: flex; gap: 2px; padding: 0 12px; background: var(--surface); border-bottom: 1px solid var(--line); overflow-x: auto; }
 .tabs button { background: none; border: none; border-bottom: 3px solid transparent; border-radius: 0; color: var(--ink2); padding: 10px 12px; font-weight: 600; white-space: nowrap; }
 .tabs button[aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent); }
