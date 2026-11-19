@@ -129,7 +129,7 @@ IC.views.dps = {
   blurb: 'Hit chance, max hit, DPS and kills per hour against any enemy, with your current gear or any gear you want to try.',
   SLOTS: ['rightHand', 'leftHand', 'head', 'body', 'legs', 'gloves', 'boots', 'cape', 'amulet', 'jewellery', 'bracelet', 'earrings', 'belt', 'ammunition', 'pet'],
   SLOT_LABEL: { rightHand: 'Weapon', leftHand: 'Off-hand', jewellery: 'Ring', ammunition: 'Ammunition' },
-  state: { user: null, gear: null, monster: null },
+  state: { user: null, gear: null, monster: null, topExtOn: true },
   slotLabel(s) { return this.SLOT_LABEL[s] || IC.pretty(s); },
   worn() { return Object.assign({}, (IC.data.profile && IC.data.profile.equipment) || {}); },
   // The tick boxes in the Boosts card. own: profile upgrade key the box depends on (greyed out without it).
@@ -247,8 +247,8 @@ IC.views.dps = {
     for (const m of IC.data.game.monsters) {
       if (m.lvl > maxLvl || m.event) continue;
       const inv = m.zone === 'invocation', boss = !inv && (m.boss || m.keyId != null);
-      const locked = m.zone === 'exterminating' && m.req > ext;
-      if ((boss && !st.topBoss) || (inv && !st.topInv) || (locked && !st.topExt)) { hidden++; continue; }
+      const exterm = m.zone === 'exterminating', locked = exterm && m.req > ext;
+      if ((boss && !st.topBoss) || (inv && !st.topInv) || (exterm && !st.topExtOn) || (locked && !st.topExt)) { hidden++; continue; }
       const r = IC.combat.calc(st.gear, IC.levels, m, this.opts());
       if (!(r.kills > 0)) continue;
       const foodCost = food && foodPrice != null ? (r.takenHr / food.heal) * foodPrice : 0;
@@ -265,7 +265,8 @@ IC.views.dps = {
         <span class="muted">Include:</span>
         <label><input type="checkbox" data-top="topBoss" ${st.topBoss ? 'checked' : ''}> Bosses</label>
         <label><input type="checkbox" data-top="topInv" ${st.topInv ? 'checked' : ''}> Invocation enemies</label>
-        <label><input type="checkbox" data-top="topExt" ${st.topExt ? 'checked' : ''}> Exterminating enemies I have not unlocked</label></div>
+        <label><input type="checkbox" data-top="topExtOn" ${st.topExtOn ? 'checked' : ''}> Exterminating enemies</label>
+        <label${st.topExtOn ? '' : ' class="muted"'}><input type="checkbox" data-top="topExt" ${st.topExt ? 'checked' : ''} ${st.topExtOn ? '' : 'disabled'}> Exterminating enemies I have not unlocked</label></div>
       <div class="cols">${list('xp', 'Top 10 by XP per hour', 'XP/hr')}${list('gold', 'Top 10 by gold per hour', 'Gold/hr')}</div>
       <p class="muted small">Recalculated whenever you change a piece of gear. XP is total combat plus Health XP (5 per damage). Gold is market loot at the sell price chosen above${food && foodPrice != null ? `, less the cost of ${esc(IC.itemName(food.id))} eaten` : ''}. Click an enemy to load it above.${hidden ? ` ${hidden} enemies are hidden by the unticked boxes above.` : ''} It does not check whether you can survive the fight: watch the Food/hr column and the enemy's max hit.</p></div>`;
   },
