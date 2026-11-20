@@ -88,22 +88,53 @@
     }
   }
 
+  // Returns a list of what went wrong (empty when everything was freshly loaded), so the Refresh button can say so.
   async function refresh(force) {
+    const problems = [];
+    if (force) IC.data.summaryError = '';
     try {
       await IC.loadBase(force);
       if (force || !IC.data.profile) await loadUser(force);
       ready = true;
     } catch (e) {
-      if (!ready) { view.innerHTML = `<div class="note alert-bad"><b>Could not load game data.</b> ${IC.esc(e.message)} <button class="ghost" id="retry">Try again</button></div>`; document.getElementById('retry').onclick = () => start(); return; }
+      if (!ready) { view.innerHTML = `<div class="note alert-bad"><b>Could not load game data.</b> ${IC.esc(e.message)} <button class="ghost" id="retry">Try again</button></div>`; document.getElementById('retry').onclick = () => start(); return [e.message]; }
+      problems.push(e.message);
     }
+    // A failed request quietly falls back to the cached copy, so check which of the refreshed ones did.
+    const stale = (part) => [...IC.staleKeys].some((k) => k.includes(part));
+    if (stale('/PlayerMarket/items/prices/latest?')) problems.push('market prices could not be re-fetched');
+    if (stale('/PlayerMarket/items/prices/summary') || IC.data.summaryError) problems.push('7-day market volumes could not be re-fetched');
+    if (stale('/Player/profile/')) problems.push('the character could not be re-fetched');
+    if (userError) problems.push(userError);
     status(); notifyHits(); show(IC.currentView);
+    return problems;
   }
   async function start() {
     view.innerHTML = '<p class="muted">Loading game data and market prices…</p>';
     userUi(); show(IC.currentView);
     await refresh(false);
   }
-  document.getElementById('refreshBtn').onclick = () => { IC.data.ranks = null; refresh(true); };
+  // Refresh says what it is doing and how it went: the button is busy while it runs, then a tick with the time, or a warning.
+  const refreshBtn = document.getElementById('refreshBtn'), refreshNote = document.getElementById('refreshNote');
+  refreshBtn.onclick = async () => {
+    if (refreshBtn.disabled) return;
+    refreshBtn.disabled = true; refreshBtn.textContent = 'Refreshing…';
+    refreshNote.className = 'refresh-note muted'; refreshNote.textContent = 'Fetching prices and character…'; refreshNote.title = '';
+    IC.data.ranks = null;
+    if (IC.views.food) IC.views.food.books.clear();
+    let problems;
+    try { problems = await refresh(true); } catch (e) { problems = [e.message]; }
+    const at = new Date().toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+    refreshBtn.disabled = false; refreshBtn.textContent = 'Refresh';
+    if (problems.length) {
+      refreshNote.className = 'refresh-note bad'; refreshNote.textContent = `⚠ Refresh failed at ${at}`;
+      refreshNote.title = 'Not everything could be re-fetched, so older numbers are still shown: ' + problems.join('; ') + '.';
+    } else {
+      const who = IC.data.profile ? IC.data.profile.username : '';
+      refreshNote.className = 'refresh-note good'; refreshNote.textContent = `✓ Updated ${at}`;
+      refreshNote.title = `Market prices${who ? ` and ${who}'s character` : ''} were freshly loaded from the game's servers at ${at}. The game itself only saves a character every 20 minutes or so, or when you switch task, so gear you just changed can take that long to show.`;
+    }
+  };
   // Keep prices fresh for alerts; skip re-rendering while a dialog or input is in use.
   setInterval(async () => {
     if (!ready || document.hidden) return;

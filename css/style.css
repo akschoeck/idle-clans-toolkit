@@ -117,3 +117,5 @@ button:disabled { opacity: .4; cursor: default; }
 .chip-x { position: absolute; top: -7px; right: -6px; width: 18px; height: 18px; padding: 0; border-radius: 50%; line-height: 1; font-size: 13px; background: var(--bad); border-color: var(--bad); color: #fff; opacity: 0; }
 .chip:hover .chip-x, .chip-x:focus-visible { opacity: 1; }
 @media (hover: none) { .chip-x { opacity: 1; } }
+.refresh-note { font-size: 12px; white-space: nowrap; }
+.refresh-note:empty { display: none; }

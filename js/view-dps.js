@@ -129,7 +129,7 @@ IC.views.dps = {
   blurb: 'Hit chance, max hit, DPS and kills per hour against any enemy, with your current gear or any gear you want to try.',
   SLOTS: ['rightHand', 'leftHand', 'head', 'body', 'legs', 'gloves', 'boots', 'cape', 'amulet', 'jewellery', 'bracelet', 'earrings', 'belt', 'ammunition', 'pet'],
   SLOT_LABEL: { rightHand: 'Weapon', leftHand: 'Off-hand', jewellery: 'Ring', ammunition: 'Ammunition' },
-  state: { user: null, gear: null, monster: null, topExtOn: true },
+  state: { user: null, gear: null, monster: null, topExtOn: false },
   slotLabel(s) { return this.SLOT_LABEL[s] || IC.pretty(s); },
   worn() { return Object.assign({}, (IC.data.profile && IC.data.profile.equipment) || {}); },
   // The tick boxes in the Boosts card. own: profile upgrade key the box depends on (greyed out without it).
