@@ -330,8 +330,27 @@ IC.views.dps = {
     const saved = IC.store.get('dpsFood', null), food = foods.find((f) => f.id === saved) || foods[Math.floor(foods.length / 2)];
     const perHr = r.takenHr / food.heal, price = food.noTrade ? null : IC.buyCost(food.id), lv = this.loot(m, r);
     const row = (label, value, title) => `<tr title="${esc(title || '')}"><td class="muted">${label}</td><td class="num"><b>${value}</b></td></tr>`;
+    // Tip: the food that leaves the most gold per hour. Food cost here is damage taken × gold per health point, so that is
+    // the cheapest gold per health. A cheap first offer is often tiny, so a food only counts if the amount on offer at
+    // that price covers a day of this fight; when none does, the plain cheapest is named with how long it would last.
+    const perHp = (f) => { const pr = f.noTrade ? null : IC.buyCost(f.id); return pr == null ? null : pr / f.heal; };
+    const lasts = (f) => { const p = IC.data.prices.get(f.id) || {}; return r.takenHr > 0 && p.lowestSellPrice > 0 && p.lowestSellPrice === IC.buyCost(f.id) ? (p.lowestPriceVolume || 0) * f.heal / r.takenHr : Infinity; };
+    const priced = foods.filter((f) => perHp(f) != null).sort((a, b) => perHp(a) - perHp(b));
+    const tipFood = priced.find((f) => lasts(f) >= 24) || priced[0];
+    let tip = '';
+    if (tipFood) {
+      const hrs = lasts(tipFood), short = hrs < 24 ? ` Only ${fmt.int((IC.data.prices.get(tipFood.id) || {}).lowestPriceVolume || 0)} are on offer at that price, about ${IC.fmt.hours(hrs)} of this fight.` : '';
+      const how = `The food that costs the least gold per health point at the cheapest current offer, among foods with at least a day of this fight on offer at that price.${short}`;
+      const mine = perHp(food), gain = mine == null ? null : r.takenHr * (mine - perHp(tipFood));
+      const foodHrs = lasts(food);
+      tip = tipFood.id !== food.id && mine != null && mine <= perHp(tipFood)
+        ? `<span class="muted small" title="${esc(how)}">Tip: this is the cheapest healing right now (${fmt.dec(mine, 1)} gold per health), but only ${fmt.int((IC.data.prices.get(food.id) || {}).lowestPriceVolume || 0)} are on offer at that price, about ${IC.fmt.hours(foodHrs)} of this fight. After that <button class="link" data-food="${tipFood.id}" title="Switch to this food">${esc(IC.itemName(tipFood.id))}</button> is next at ${fmt.dec(perHp(tipFood), 1)}.</span>`
+        : tipFood.id === food.id
+        ?`<span class="muted small" title="${esc(how)}">Tip: this is the cheapest healing on the market right now (${fmt.dec(mine, 1)} gold per health), so it keeps the most gold per hour.</span>`
+        : `<span class="small" title="${esc(how)}">Tip: <button class="link" data-food="${tipFood.id}" title="Switch to this food">${esc(IC.itemName(tipFood.id))}</button> is the cheapest healing right now at ${fmt.dec(perHp(tipFood), 1)} gold per health${mine == null ? '' : `, against ${fmt.dec(mine, 1)} for ${esc(IC.itemName(food.id))}`}${gain > 0.5 ? `: <span class="good">+${fmt.int(gain)} gold/hr</span> after food` : ''}.${short ? ' <span class="warn">Small supply.</span>' : ''}</span>`;
+    }
     return `<div class="card"><h3>Food</h3>
-      <div class="controls"><label>Food <select id="dFood">${foods.map((f) => `<option value="${f.id}" ${f.id === food.id ? 'selected' : ''}>${esc(IC.itemName(f.id))} (heals ${fmt.int(f.heal)})</option>`).join('')}</select></label></div>
+      <div class="controls"><label>Food <select id="dFood">${foods.map((f) => `<option value="${f.id}" ${f.id === food.id ? 'selected' : ''}>${esc(IC.itemName(f.id))} (heals ${fmt.int(f.heal)})</option>`).join('')}</select></label>${tip}</div>
       <table><tbody>
         ${row('Damage taken per hour', fmt.dec(r.takenHr, 1), 'Enemy hit chance × chance you fail to dodge × average hit × its attacks per hour while it is alive')}
         ${row(`${esc(IC.itemName(food.id))} eaten per hour`, fmt.dec(perHr, perHr < 10 ? 2 : 1), `Damage taken ÷ ${fmt.int(food.heal)} health per piece`)}
@@ -392,6 +411,8 @@ IC.views.dps = {
     out.onclick = (e) => {
       const go = e.target.closest('[data-goto-mon]'), arrow = e.target.closest('[data-arrow]');
       if (arrow) { st.gear.ammunition = +arrow.dataset.arrow; this.draw(el); return; }
+      const eat = e.target.closest('[data-food]');
+      if (eat) { IC.store.set('dpsFood', +eat.dataset.food); this.draw(el); return; }
       if (go) { st.monster = go.dataset.gotoMon; IC.store.set('dpsMonster', st.monster); el.querySelector('#dMon').value = st.monster; this.draw(el); el.querySelector('#dMon').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
       else if (e.target.closest('[data-lootinfo]')) IC.views.combat.lootDialog(m.key);
     };
