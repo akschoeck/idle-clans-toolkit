@@ -68,15 +68,48 @@ IC.views.food = {
     const keep = task.skill === 'farming' ? 1 - U.seeds : 1; // Farming trickery saves seeds
     for (const c of task.costs) this.make(c.id, mode, n * c.amt * keep, acc, depth + 1);
   },
+  // How one food holds up in a fight. The player's own account of the game's rule: every time the enemy attacks (hit or
+  // miss) you eat one piece if your health is under the threshold, and never more than one. The damage is taken to land
+  // first, then the bite. A hit is a whole number from 0 to the enemy's max hit, each equally likely (wiki: "randomly
+  // between 0 and their max hit", both ends included), which also matches the average of half the max hit used elsewhere.
+  // Follows the spread of your health over many enemy attacks (after a death you start again at full health) and reads
+  // off the long-run rates per enemy attack:
+  // death: chance of dying, eat: pieces eaten, waste: health per piece that heals past the maximum.
+  sim(hp, eatMax, heal, p, max) {
+    let dist = new Float64Array(hp + 1); dist[hp] = 1;
+    let death = 0, eat = 0, waste = 0, steps = 0;
+    for (let i = 0; i < 400; i++) {
+      const next = new Float64Array(hp + 1); let dead = 0, ate = 0, over = 0;
+      const land = (h, w) => {
+        if (h <= 0) { dead += w; return; }
+        if (h <= eatMax) { ate += w; const up = h + heal; if (up > hp) { over += w * (up - hp); h = hp; } else h = up; }
+        next[h] += w;
+      };
+      for (let h = 1; h <= hp; h++) {
+        const w = dist[h]; if (!w) continue;
+        land(h, w * (1 - p));
+        const each = w * p / (max + 1);
+        for (let d = 0; d <= max; d++) land(h - d, each);
+      }
+      if (i >= 200) { death += dead; eat += ate; waste += over; steps++; }
+      next[hp] += dead; // back in at full health
+      dist = next;
+    }
+    return { death: death / steps, eat: eat / steps, waste: eat > 0 ? waste / eat : Math.max(0, heal - (hp - eatMax)) };
+  },
   // One row per food and route, with every number the tables need.
-  rows(o, hp, rate, takenHr) {
+  // fight: { p: chance an enemy attack damages you, max: its max hit, perHr: its attacks per hour }, or null.
+  rows(o, hp, rate, fight) {
     const out = [], foods = IC.data.game.items.filter((i) => i && i.heal > 0 && !i.dead);
     // Auto eating waits until you are under the threshold, so a piece can only use the health that is missing by then.
-    const room = hp ? Math.max(1, Math.floor(hp * (1 - o.thresh / 100))) : Infinity;
+    const eatMax = hp ? Math.ceil(hp * o.thresh / 100) - 1 : 0, room = hp ? hp - eatMax : Infinity, sims = new Map();
     for (const food of foods) {
       for (const route of ['scratch', 'cook', 'buy']) {
         if (route !== 'buy' && !this.pickTask(food.id, route)) continue;
-        const eff = Math.min(food.heal, room), pieces = Math.ceil(o.target / eff);
+        if (fight && !sims.has(food.heal)) sims.set(food.heal, this.sim(hp, eatMax, food.heal, fight.p, fight.max));
+        const sm = fight ? sims.get(food.heal) : null;
+        const eff = sm ? Math.max(1, food.heal - sm.waste) : Math.min(food.heal, room), pieces = Math.ceil(o.target / eff);
+        const deathHr = sm ? sm.death * fight.perHr : 0;
         const acc = { gold: 0, hours: 0, xp: {}, buys: new Map(), tasks: [], ok: true, buyMode: o.buy, pieces, thin: [], unknown: [] };
         this.make(food.id, route, 1, acc, 0);
         if (!acc.ok) continue;
@@ -87,7 +120,7 @@ IC.views.food = {
         out.push({
           food, route, acc, missing, eff, pieces, thin, gold: acc.gold, hours: acc.hours,
           gPerHp: acc.gold / eff, allIn: (acc.gold + acc.hours * rate) / eff, totGold: acc.gold * pieces, totHours: acc.hours * pieces,
-          xp: Object.values(acc.xp).reduce((a, b) => a + b, 0), eatHr: takenHr > 0 ? takenHr / eff : null,
+          xp: Object.values(acc.xp).reduce((a, b) => a + b, 0), eatHr: sm ? sm.eat * fight.perHr : null, deathHr, risky: deathHr > 0.01,
         });
       }
     }
@@ -122,7 +155,8 @@ IC.views.food = {
   tags(r) {
     return (r.missing.length ? `<span class="tag warn">needs ${esc(IC.ui.reqText(r.missing))}</span>` : '')
       + (r.acc.unknown.length ? `<span class="tag" title="${esc(r.thin.join('. '))}. Checking the deeper sell offers…">checking supply</span>` : r.thin.length ? `<span class="tag warn" title="${esc(r.thin.join('. '))}. The price shown assumes the rest can be had at the dearest visible offer.">not enough on sale</span>` : '')
-      + (r.eff < r.food.heal ? `<span class="tag warn" title="Heals ${r.food.heal}, but at your eat threshold only ${r.eff} health is missing, so the rest is wasted.">wastes ${r.food.heal - r.eff}</span>` : '');
+      + (r.food.heal - r.eff >= 0.5 ? `<span class="tag warn" title="Heals ${r.food.heal}, but on average ${fmt.dec(r.food.heal - r.eff, 1)} of that would take you past your maximum health and is lost.">wastes ${fmt.dec(r.food.heal - r.eff, 1)}</span>` : '')
+      + (r.risky ? `<span class="tag warn" title="One piece per enemy attack does not out-heal ${esc(this.monName || 'this enemy')} reliably at this threshold: about one death every ${fmt.dec(1 / r.deathHr, r.deathHr > 0.1 ? 1 : 0)} hours of fighting.">cannot keep up</span>` : '');
   },
   render(el) {
     const p = IC.data.profile, o = this.opt(), D = IC.views.dps, game = IC.data.game;
@@ -139,17 +173,22 @@ IC.views.food = {
       m = D.monster(); r = IC.combat.calc(D.gearFor(), IC.levels, m, D.opts());
     }
     const takenHr = r ? r.takenHr : 0;
-    const all = this.rows(o, hp, rate, takenHr);
+    const fight = r && hp && r.enemy.hit > 0 && r.enemy.max > 0 ? { p: r.enemy.hit * (1 - r.dodge), max: r.enemy.max, perHr: (isFinite(r.secs) ? (r.secs - r.respawn) / r.secs : 1) * 3600 / (m.interval / 1000) } : null;
+    this.monName = m ? IC.pretty(m.key) : '';
+    const all = this.rows(o, hp, rate, fight);
     const shown = all.filter((x) => (o.ignore || !x.missing.length) && x.food.heal >= (+o.minHeal || 0));
     const by = (route) => shown.filter((x) => x.route === route);
     // Best three foods overall: each food by its cheapest route, all costs counted.
     const perFood = new Map();
-    for (const x of shown.slice().sort((a, b) => a.allIn - b.allIn)) if (!perFood.has(x.food.id)) perFood.set(x.food.id, x);
+    // Foods that cannot keep you alive against the chosen enemy are left out, unless nothing can.
+    const safe = shown.filter((x) => !x.risky), pool = safe.length ? safe : shown;
+    for (const x of pool.slice().sort((a, b) => a.allIn - b.allIn)) if (!perFood.has(x.food.id)) perFood.set(x.food.id, x);
     const top = [...perFood.values()].slice(0, 3);
     // Rows near the top of any list whose prices rest on a first offer too small for the order: fetch their sell offers.
     const lead = (list) => list.slice().sort((a, b) => a.allIn - b.allIn).slice(0, 6);
     this.want = [...lead(by('scratch')), ...lead(by('cook')), ...lead(by('buy')), ...top].flatMap((x) => x.acc.unknown);
-    const room = hp ? Math.max(1, Math.floor(hp * (1 - o.thresh / 100))) : 0, eatAt = hp ? Math.ceil(hp * o.thresh / 100) : 0;
+    const eatAt = hp ? Math.ceil(hp * o.thresh / 100) - 1 : 0, room = hp ? hp - eatAt : 0; // eats at eatAt health or less
+    const keepsUp = safe.length ? Math.min(...safe.map((x) => x.food.heal)) : null;
     const big = shown.length ? Math.max(...shown.map((x) => x.food.heal)) : 0;
 
     // Food the chosen enemy drops (raw meat is cooked by Keep it burning when the Cooking level allows).
@@ -189,7 +228,7 @@ IC.views.food = {
       <div class="grid">${top.length ? top.map(card).join('') : '<p class="muted">No food matches these settings.</p>'}</div>
       ${p ? `<div class="cols">
         <div class="card"><h3>What suits ${esc(p.username)}</h3><table><tbody>
-          <tr><td class="muted">Health level, taken as maximum health</td><td class="num"><b>${hp}</b></td></tr>
+          <tr><td class="muted">Maximum health (your Health level)</td><td class="num"><b>${hp}</b></td></tr>
           <tr><td class="muted">Eats at or below</td><td class="num"><b>${eatAt} health</b></td></tr>
           <tr><td class="muted">Biggest heal that is never wasted</td><td class="num"><b>${room}</b></td></tr>
           <tr><td class="muted">Biggest heal you can ${o.ignore ? 'get' : 'make or buy'}</td><td class="num"><b>${big}</b></td></tr>
@@ -197,8 +236,10 @@ IC.views.food = {
         <p class="muted small">${room >= big ? `Nothing in the game overheals at a ${esc(o.thresh)}% threshold, so price per health decides.` : `At a ${esc(o.thresh)}% threshold only ${room} health is missing when you eat. Bigger foods are counted at ${room} and marked.`} ${u.autoEating > 0 ? '' : 'You do not own Auto eating yet (Local market, 100,000 gold).'} ${u.pickyEater > 0 ? 'Picky eater picks the food closest to your missing health, so carrying a small and a large food wastes the least.' : 'Without Picky eater (10M gold, Cooking 90) food is eaten in inventory order, so one food type at a time works best.'}</p></div>
         <div class="card"><h3>Fighting <select id="fMon">${game.monsters.slice().sort((a, b) => a.lvl - b.lvl).map((x) => `<option value="${esc(x.key)}" ${x.key === m.key ? 'selected' : ''}>${esc(IC.pretty(x.key))} (lvl ${x.lvl})</option>`).join('')}</select></h3><table><tbody>
           <tr><td class="muted">Damage you take per hour</td><td class="num"><b>${fmt.int(takenHr)}</b></td></tr>
-          <tr><td class="muted">Its hardest hit</td><td class="num"><b>${r.enemy.max}</b>${hp && r.enemy.max >= eatAt ? '<span class="tag warn" title="A hit this size from just above your eat threshold would kill you. Raise the threshold.">over your threshold</span>' : ''}</td></tr>
-          ${top[0] ? `<tr><td class="muted">${esc(IC.itemName(top[0].food.id))} eaten per hour</td><td class="num"><b>${fmt.dec(top[0].eatHr, 1)}</b></td></tr>
+          <tr><td class="muted">Its hardest hit</td><td class="num"><b>${r.enemy.max}</b>${hp && r.enemy.max > eatAt ? '<span class="tag warn" title="A hit this size from just above your eat threshold would kill you. Raise the threshold.">over your threshold</span>' : ''}</td></tr>
+          ${fight ? `<tr title="You can eat one piece each time it attacks, hit or miss"><td class="muted">Its attacks per hour (one bite each at most)</td><td class="num"><b>${fmt.int(fight.perHr)}</b></td></tr>
+          <tr title="The smallest food that keeps the risk of dying under one death per 100 hours at this threshold"><td class="muted">Smallest heal that keeps up</td><td class="num"><b>${keepsUp == null ? '<span class="bad">none at this threshold</span>' : keepsUp}</b></td></tr>` : ''}
+          ${top[0] ? `<tr><td class="muted">${esc(IC.itemName(top[0].food.id))} eaten per hour</td><td class="num"><b>${top[0].eatHr == null ? '–' : fmt.dec(top[0].eatHr, 1)}</b></td></tr>
           <tr><td class="muted">Hours of fighting from ${fmt.int(o.target)} health</td><td class="num"><b>${takenHr > 0 ? fmt.dec(o.target / takenHr, 1) : '–'}</b></td></tr>` : ''}
           <tr><td class="muted">Healing it drops per hour</td><td class="num"><b>${fmt.int(dropHeal)}</b>${takenHr > 0 && dropHeal > 0 ? ` <span class="muted small">${fmt.pct(dropHeal / takenHr, 0)} of what you take</span>` : ''}</td></tr>
         </tbody></table>
@@ -211,7 +252,7 @@ IC.views.food = {
       <h3 style="margin-top:16px">3. Buy it ready to eat</h3>
       <p class="muted small">No time at all, just gold.</p><div id="fBuyT"></div>
       <h3 style="margin-top:16px">Every food</h3><div id="fAll"></div>
-      <p class="muted small" style="margin-top:10px">Each table starts on its best five; press Show more for the rest, or click a heading to sort. "Gold / health, time included" is (gold paid + hours spent × ${fmt.int(rate)} gold) ÷ health healed. ${o.rate === '' ? `That hourly figure is ${best ? `what ${esc(IC.taskName(best.task))} earns you` : 'zero because no profitable task was found'}; type your own to change it.` : ''} Applied from your profile: ${[U.fish ? `The fisherman (${fmt.pct(U.fish, 0)} double catch)` : '', U.forage ? `Power forager (${fmt.pct(U.forage, 0)} double loot)` : '', U.seeds ? `Farming trickery (${fmt.pct(U.seeds, 0)} seeds saved)` : '', U.autoCook ? `Most efficient fisherman (${fmt.pct(U.autoCook, 0)} cooked as caught)` : ''].filter(Boolean).join(', ') || 'no food-related upgrades'}. Not counted: the Chef's hat (+20% healing), skilling gloves (5% double loot), and the XP you earn while making food, which is shown but not valued. Maximum health is taken to equal your Health level, and the wiki does not say how fast food can be eaten, so very small foods may not keep up with hard-hitting enemies. Market prices are what the whole quantity would cost working up through the current sell offers, not just the cheapest one, so they change with the amount of health you ask for; "not enough on sale" means even all the visible offers fall short.</p>`;
+      <p class="muted small" style="margin-top:10px">Each table starts on its best five; press Show more for the rest, or click a heading to sort. "Gold / health, time included" is (gold paid + hours spent × ${fmt.int(rate)} gold) ÷ health healed. ${o.rate === '' ? `That hourly figure is ${best ? `what ${esc(IC.taskName(best.task))} earns you` : 'zero because no profitable task was found'}; type your own to change it.` : ''} Applied from your profile: ${[U.fish ? `The fisherman (${fmt.pct(U.fish, 0)} double catch)` : '', U.forage ? `Power forager (${fmt.pct(U.forage, 0)} double loot)` : '', U.seeds ? `Farming trickery (${fmt.pct(U.seeds, 0)} seeds saved)` : '', U.autoCook ? `Most efficient fisherman (${fmt.pct(U.autoCook, 0)} cooked as caught)` : ''].filter(Boolean).join(', ') || 'no food-related upgrades'}. Not counted: the Chef's hat (+20% healing), skilling gloves (5% double loot), and the XP you earn while making food, which is shown but not valued. Maximum health equals your Health level. Eating follows the game's rule as players describe it: one piece each time the enemy attacks, hit or miss, and only while you are under the threshold. Against the enemy chosen above the page plays that out over many attacks; a food marked "cannot keep up" would get you killed more than once per 100 hours and is left out of the best three, and "wastes" is the average healing lost past your maximum health. Market prices are what the whole quantity would cost working up through the current sell offers, not just the cheapest one, so they change with the amount of health you ask for; "not enough on sale" means even all the visible offers fall short.</p>`;
 
     const route = (id, rows, empty) => IC.ui.table(el.querySelector(id), {
       rows, sort: 5, dir: 1, limit: 5, rowClass: (x) => (x.missing.length ? 'locked' : ''), empty,
@@ -226,7 +267,7 @@ IC.views.food = {
         { label: 'Total gold', num: true, val: (x) => x.totGold, html: (x) => fmt.short(x.totGold), title: `Gold for ${fmt.int(o.target)} health` },
         { label: 'Total time', num: true, val: (x) => x.totHours, html: (x) => (x.totHours ? IC.views.skilling.dur(x.totHours) : '–'), title: `Your time for ${fmt.int(o.target)} health` },
         { label: 'XP each', num: true, val: (x) => x.xp, html: (x) => (x.xp ? fmt.dec(x.xp, 0) : '–'), title: 'Skill XP earned per piece, all skills together' },
-        ...(takenHr > 0 ? [{ label: 'Eaten/hr', num: true, val: (x) => x.eatHr, html: (x) => fmt.dec(x.eatHr, 1), title: `Pieces eaten per hour fighting ${IC.pretty(m.key)}` }] : []),
+        ...(fight ? [{ label: 'Eaten/hr', num: true, val: (x) => x.eatHr, html: (x) => fmt.dec(x.eatHr, 1), title: `Pieces eaten per hour fighting ${IC.pretty(m.key)}` }] : []),
       ],
     });
     const none = o.ignore ? 'No food can be had this way at current prices.' : 'Nothing here is within your levels. Tick "Ignore my skill levels" to see what you are working towards.';
