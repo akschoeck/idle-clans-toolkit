@@ -30,7 +30,10 @@ IC.combat = (() => {
   // Boosts read straight from the loaded profile: jewellery enchantments and owned combat upgrades.
   function auto() {
     const p = IC.data.profile || {}, u = p.upgrades || {};
-    return { ench: p.enchantmentBoosts || {}, monsterHunter: u.monsterHunter > 0, bountyHunter: u.upgrade_bounty_hunter > 0, principles: u.upgrade_principles_of_combat > 0 };
+    // Ammo saver (upgrade type 13): the owned tier's chance, in percent, that a shot does not use up its arrow.
+    const saver = IC.data.game.upgrades.find((x) => x.type === 13), tier = u['ammo-saver'] || 0;
+    const ammoSave = saver && tier > 0 ? saver.values[Math.min(tier, saver.values.length) - 1] || 0 : 0;
+    return { ench: p.enchantmentBoosts || {}, monsterHunter: u.monsterHunter > 0, bountyHunter: u.upgrade_bounty_hunter > 0, principles: u.upgrade_principles_of_combat > 0, ammoSave };
   }
   const upgradeValue = (type, fallback) => { const u = IC.data.game.upgrades.find((x) => x.type === type); return (u && u.values[0]) || fallback; };
   // gear: { slot: itemId }. Returns summed bonuses plus the weapon. A two-handed weapon disables the off-hand.
@@ -100,6 +103,12 @@ IC.combat = (() => {
     if (o.dailyXp) { xpMult *= 1 + (g.dailyXp || 30) / 100; notes.push(`Daily boost +${g.dailyXp || 30}% XP`); }
     const secs = attacksToKill(m.hp, hit, max, min) * interval / 1000 + respawn;
     const kills = 3600 / secs, dmgHr = kills * m.hp;
+    // Arrows: one per shot, hit or miss (the wiki's Ammo saver table counts "shots per arrow"; a miss using one is an
+    // assumption), less the Ammo saver's chance. Items flagged NeverConsume (Arrow of Sobek) are never used up.
+    const ammo = gear.ammunition >= 0 ? items[gear.ammunition] || null : null;
+    const attacksHr = isFinite(secs) && secs > 0 ? (3600 / secs) * (secs - respawn) / (interval / 1000) : 0;
+    const usesAmmo = type === 'archery' && !!ammo && ammo.stats.aStr > 0 && !ammo.keep;
+    const arrowsHr = usesAmmo ? attacksHr * (1 - o.ammoSave / 100) : 0;
 
     const eType = kind(m.style);
     const theirs = { melee: [m.s.accB, m.s.att, m.s.strB, m.s.str], archery: [m.s.aAccB, m.s.arch, m.s.aStrB, m.s.arch], magic: [m.s.mAccB, m.s.mag, m.s.mStrB, m.s.mag] }[eType];
@@ -113,7 +122,7 @@ IC.combat = (() => {
     const takenHr = fightShare * 3600 / (m.interval / 1000) * eHit * (1 - dodge) * eMax / 2;
     return {
       tot, weapon, style, type, weak, quest, assign, notes, min, xpMult, interval, hit, max, secs, respawn, kills: isFinite(kills) ? kills : 0, dps: isFinite(secs) ? m.hp / secs : 0, dmgHr: isFinite(dmgHr) ? dmgHr : 0,
-      dodge, takenHr,
+      dodge, takenHr, ammo, attacksHr, arrowsHr, ammoSave: o.ammoSave, gear, levels, opts,
       enemy: { type: eType, hit: eHit, max: eMax, dps: eHit * eMax / 2 / (m.interval / 1000) },
     };
   }
@@ -129,7 +138,7 @@ IC.views.dps = {
   blurb: 'Hit chance, max hit, DPS and kills per hour against any enemy, with your current gear or any gear you want to try.',
   SLOTS: ['rightHand', 'leftHand', 'head', 'body', 'legs', 'gloves', 'boots', 'cape', 'amulet', 'jewellery', 'bracelet', 'earrings', 'belt', 'ammunition', 'pet'],
   SLOT_LABEL: { rightHand: 'Weapon', leftHand: 'Off-hand', jewellery: 'Ring', ammunition: 'Ammunition' },
-  state: { user: null, gear: null, monster: null, topExtOn: false },
+  state: { user: null, gear: null, monster: null, topExtOn: false, topArrow: true },
   slotLabel(s) { return this.SLOT_LABEL[s] || IC.pretty(s); },
   worn() { return Object.assign({}, (IC.data.profile && IC.data.profile.equipment) || {}); },
   // The tick boxes in the Boosts card. own: profile upgrade key the box depends on (greyed out without it).
@@ -206,10 +215,49 @@ IC.views.dps = {
     const perHr = m.lootEvery ? r.dmgHr / m.lootEvery : r.kills; // event bosses roll loot per 500 damage, not per kill
     return { shop, market, key, shopHr: shop * perHr, marketHr: (market - key) * perHr };
   },
+  // Arrows that can be shot, weakest first.
+  arrowList() { const N = IC.data.names; return IC.data.game.items.filter((i) => i && !i.dead && i.stats.aStr > 0 && (N.get(i.id) || {}).equipmentSlot === 'ammunition').sort((a, b) => a.stats.aStr - b.stats.aStr); },
+  // What the arrows shot in an hour cost to buy, for a result from IC.combat.calc.
+  arrowCost(r) {
+    const price = r.ammo && r.arrowsHr > 0 && !r.ammo.noTrade ? IC.buyCost(r.ammo.id) : null;
+    return { price, perHr: r.arrowsHr, costHr: r.arrowsHr * (price || 0) };
+  },
+  // The same fight with each arrow in turn: what the extra damage earns against what the arrows cost.
+  arrowRows(r, m) {
+    const cur = r.gear.ammunition == null ? -1 : r.gear.ammunition;
+    return this.arrowList().map((a) => {
+      const c = a.id === cur ? r : IC.combat.calc(Object.assign({}, r.gear, { ammunition: a.id }), r.levels, m, r.opts);
+      const k = this.arrowCost(c), loot = this.loot(m, c).marketHr;
+      return { a, c, k, loot, net: loot - k.costHr, cur: a.id === cur };
+    });
+  },
+  arrowHtml(r, m) {
+    if (r.type !== 'archery') return '';
+    const rows = this.arrowRows(r, m), base = this.loot(m, r).marketHr - this.arrowCost(r).costHr;
+    const best = rows.reduce((b, x) => (!b || x.net > b.net ? x : b), null);
+    const diff = (v, d) => `<span class="small ${v > 1e-9 ? 'good' : v < -1e-9 ? 'bad' : 'muted'}">${v >= 0 ? '+' : ''}${d ? fmt.dec(v, d) : fmt.int(v)}</span>`;
+    return `<div class="card"><h3>Arrows against ${esc(IC.pretty(m.key))}</h3>
+      <div class="tablewrap"><table><thead><tr><th>Arrow</th><th class="num" title="Archery strength bonus">Str</th><th class="num" title="Cheapest current offer">Price</th><th class="num">DPS</th><th class="num">Arrows/hr</th><th class="num">Arrow cost/hr</th><th class="num" title="Market loot per hour before arrows">Loot/hr</th><th class="num" title="Market loot per hour less the arrows shot, and the change from the arrow you have on">Gold/hr after arrows</th></tr></thead><tbody>
+      ${rows.map((x) => `<tr><td><button class="link" data-arrow="${x.a.id}" title="Put this arrow on">${esc(IC.itemName(x.a.id))}</button>${x.cur ? '<span class="tag good">selected</span>' : ''}${x === best ? '<span class="tag good">most gold</span>' : ''}${x.a.keep ? '<span class="tag">never used up</span>' : ''}${x.a.req && (IC.levels[x.a.req.skill] || 1) < x.a.req.level ? `<span class="tag warn">${esc(IC.skillName(x.a.req.skill))} ${x.a.req.level}</span>` : ''}</td>
+        <td class="num">${x.a.stats.aStr}</td><td class="num">${x.a.keep ? '<span class="muted">–</span>' : x.k.price == null ? '<span class="muted">no price</span>' : fmt.int(x.k.price)}</td>
+        <td class="num">${fmt.dec(x.c.dps, 2)} ${x.cur ? '' : diff(x.c.dps - r.dps, 2)}</td><td class="num">${fmt.int(x.k.perHr)}</td><td class="num">${fmt.int(x.k.costHr)}</td><td class="num">${fmt.int(x.loot)}</td>
+        <td class="num"><b class="${x.net >= 0 ? '' : 'bad'}">${fmt.int(x.net)}</b> ${x.cur ? '' : diff(x.net - base)}</td></tr>`).join('') || '<tr><td colspan="8" class="muted">The game data lists no arrows.</td></tr>'}
+      </tbody></table></div>
+      <p class="muted small">Each row is this fight with that arrow and the rest of your gear unchanged. A better arrow raises your max hit, so you kill faster and earn more loot, but each shot costs more. One arrow is used per shot, hit or miss${r.ammoSave ? `, and your Ammo saver keeps ${r.ammoSave}% of them` : '; the Ammo saver upgrade (Local market) would save a share of them'}. Arrows are priced at the cheapest current offer. Food is not counted here. Click an arrow to put it on.</p></div>`;
+  },
   // The two result cards ("Your stats" and the enemy), shared with the monster dialog on the Combat tab.
   statsHtml(r, m, lootLink) {
     const C = IC.combat, L = IC.levels, lv = this.loot(m, r);
     const row = (label, value, title) => `<tr title="${esc(title || '')}"><td class="muted">${label}</td><td class="num"><b>${value}</b></td></tr>`;
+    let arrows = '';
+    if (r.type === 'archery') {
+      const k = this.arrowCost(r), isArrow = r.ammo && r.ammo.stats.aStr > 0, after = lv.marketHr - k.costHr;
+      const best = this.arrowRows(r, m).reduce((b, x) => (!b || x.net > b.net ? x : b), null);
+      arrows = row('Arrows used per hour', !isArrow ? '<span class="warn">no arrows on</span>' : r.ammo.keep ? '0 <span class="muted small">never used up</span>' : fmt.int(k.perHr), `${fmt.int(r.attacksHr)} shots per hour, one arrow each${r.ammoSave ? `, less the ${r.ammoSave}% your Ammo saver keeps` : ''}`)
+        + row('Arrow cost per hour', isArrow && !r.ammo.keep && k.price == null ? 'no price' : fmt.int(k.costHr), k.price == null ? '' : `${IC.itemName(r.ammo.id)} at ${fmt.int(k.price)} gold each, the cheapest current offer`)
+        + row('Market loot per hour after arrows', `<span class="${after >= 0 ? 'good' : 'bad'}">${fmt.int(after)}</span>`, 'Loot per hour, player market, less the arrow cost per hour')
+        + (best ? row('Best arrow for gold here', `${esc(IC.itemName(best.a.id))} ${best.cur ? '<span class="tag good">selected</span>' : `<span class="small good">+${fmt.int(best.net - after)}/hr</span>`}`, 'The arrow that leaves the most gold per hour after paying for the arrows. The Arrows card below compares them all.') : '');
+    }
     const why = (label) => (lootLink && !m.event ? `<button class="link" data-lootinfo title="Show how this is worked out">${label}</button>` : label);
     return `<div class="cols">
       <div class="card"><h3>Your stats</h3><table><tbody>
@@ -224,6 +272,7 @@ IC.views.dps = {
         ${row('Health exp per hour', fmt.int(r.dmgHr * r.xpMult))}
         ${row(why('Loot per hour, base sell value'), fmt.int(lv.shopHr))}
         ${row(why('Loot per hour, player market'), fmt.int(lv.marketHr), lv.key ? `After ${fmt.short(lv.key)} per kill for the key` : '')}
+        ${arrows}
       </tbody></table>
       <p class="muted small">${esc(IC.pretty(r.type))} attack${r.weapon ? ` with ${esc(IC.itemName(r.weapon.id))}` : ', unarmed'} every ${fmt.dec(r.interval / 1000, 2)}s${r.style ? ` (${C.STYLE[r.style]})` : ''}. Levels used: Attack ${L.attack}, Strength ${L.strength}, Defence ${L.defence}, Archery ${L.archery}, Magic ${L.magic}, Agility ${L.agility}.${lootLink ? ' Click a loot line to see how it is worked out.' : ''}</p></div>
       <div class="card"><h3>${esc(IC.pretty(m.key))} <span class="muted small">Lvl ${m.lvl} · ${fmt.int(m.hp)} HP</span></h3><table><tbody>
@@ -242,6 +291,8 @@ IC.views.dps = {
     const food = foods.find((f) => f.id === IC.store.get('dpsFood', null)) || foods[Math.floor(foods.length / 2)];
     const foodPrice = food && !food.noTrade ? IC.buyCost(food.id) : null;
     const maxLvl = +st.topMax || Infinity, ext = (IC.levels && IC.levels.exterminating) || 1;
+    const items = IC.data.game.items, bow = ((st.gear.rightHand >= 0 && items[st.gear.rightHand]) || {}).style === 5, withArrows = bow && st.topArrow;
+    const curArrow = st.gear.ammunition == null ? -1 : st.gear.ammunition, arrowOpts = this.arrowList();
     let hidden = 0;
     const rows = [];
     for (const m of IC.data.game.monsters) {
@@ -252,12 +303,13 @@ IC.views.dps = {
       const r = IC.combat.calc(st.gear, IC.levels, m, this.opts());
       if (!(r.kills > 0)) continue;
       const foodCost = food && foodPrice != null ? (r.takenHr / food.heal) * foodPrice : 0;
-      rows.push({ m, r, xp: r.dmgHr * r.xpMult * 5, gold: this.loot(m, r).marketHr - foodCost, foodHr: food ? r.takenHr / food.heal : null, locked });
+      const arrowCost = withArrows ? this.arrowCost(r).costHr : 0;
+      rows.push({ m, r, xp: r.dmgHr * r.xpMult * 5, gold: this.loot(m, r).marketHr - foodCost - arrowCost, arrowsHr: r.arrowsHr, foodHr: food ? r.takenHr / food.heal : null, locked });
     }
     const list = (key, label, value) => {
       const top = rows.slice().sort((a, b) => b[key] - a[key]).slice(0, 10);
-      return `<div><h4 style="margin:0 0 6px">${label}</h4><div class="tablewrap"><table><thead><tr><th>#</th><th>Enemy</th><th class="num">Lvl</th><th class="num">${value}</th><th class="num">Kills/hr</th><th class="num" title="Pieces of the selected food eaten per hour">Food/hr</th></tr></thead><tbody>
-        ${top.map((x, i) => `<tr><td class="muted">${i + 1}</td><td><button class="link" data-goto-mon="${esc(x.m.key)}" title="Load this enemy above">${esc(IC.pretty(x.m.key))}</button>${x.m.key === this.monster().key ? '<span class="tag good">selected</span>' : ''}${x.locked ? `<span class="tag warn">Exterminating ${x.m.req}</span>` : ''}</td><td class="num">${x.m.lvl}</td><td class="num"><b>${fmt.int(x[key])}</b></td><td class="num">${fmt.int(Math.floor(x.r.kills))}</td><td class="num">${x.foodHr == null ? '–' : fmt.dec(x.foodHr, x.foodHr < 10 ? 1 : 0)}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">No enemies match.</td></tr>'}
+      return `<div><h4 style="margin:0 0 6px">${label}</h4><div class="tablewrap"><table><thead><tr><th>#</th><th>Enemy</th><th class="num">Lvl</th><th class="num">${value}</th><th class="num">Kills/hr</th><th class="num" title="Pieces of the selected food eaten per hour">Food/hr</th>${withArrows ? '<th class="num" title="Arrows used up per hour">Arrows/hr</th>' : ''}</tr></thead><tbody>
+        ${top.map((x, i) => `<tr><td class="muted">${i + 1}</td><td><button class="link" data-goto-mon="${esc(x.m.key)}" title="Load this enemy above">${esc(IC.pretty(x.m.key))}</button>${x.m.key === this.monster().key ? '<span class="tag good">selected</span>' : ''}${x.locked ? `<span class="tag warn">Exterminating ${x.m.req}</span>` : ''}</td><td class="num">${x.m.lvl}</td><td class="num"><b>${fmt.int(x[key])}</b></td><td class="num">${fmt.int(Math.floor(x.r.kills))}</td><td class="num">${x.foodHr == null ? '–' : fmt.dec(x.foodHr, x.foodHr < 10 ? 1 : 0)}</td>${withArrows ? `<td class="num">${fmt.int(x.arrowsHr)}</td>` : ''}</tr>`).join('') || '<tr><td colspan="7" class="muted">No enemies match.</td></tr>'}
       </tbody></table></div></div>`;
     };
     return `<div class="card"><h3>Best enemies with this gear</h3>
@@ -266,9 +318,11 @@ IC.views.dps = {
         <label><input type="checkbox" data-top="topBoss" ${st.topBoss ? 'checked' : ''}> Bosses</label>
         <label><input type="checkbox" data-top="topInv" ${st.topInv ? 'checked' : ''}> Invocation enemies</label>
         <label><input type="checkbox" data-top="topExtOn" ${st.topExtOn ? 'checked' : ''}> Exterminating enemies</label>
-        <label${st.topExtOn ? '' : ' class="muted"'}><input type="checkbox" data-top="topExt" ${st.topExt ? 'checked' : ''} ${st.topExtOn ? '' : 'disabled'}> Exterminating enemies I have not unlocked</label></div>
+        <label${st.topExtOn ? '' : ' class="muted"'}><input type="checkbox" data-top="topExt" ${st.topExt ? 'checked' : ''} ${st.topExtOn ? '' : 'disabled'}> Exterminating enemies I have not unlocked</label>
+        <label${bow ? '' : ' class="muted"'} title="${bow ? 'Take the arrows you shoot off the gold per hour' : 'Only applies with a bow or crossbow as your weapon'}"><input type="checkbox" data-top="topArrow" ${withArrows ? 'checked' : ''} ${bow ? '' : 'disabled'}> Arrow costs</label>
+        ${withArrows ? `<label title="Changes the Ammunition slot in the gear on the left">Arrow <select id="dTopArrow">${arrowOpts.some((a) => a.id === curArrow) ? '' : `<option value="${curArrow}" selected>${curArrow >= 0 && items[curArrow] ? esc(IC.itemName(curArrow)) : 'None'}</option>`}${arrowOpts.map((a) => { const pr = a.keep || a.noTrade ? null : IC.buyCost(a.id); return `<option value="${a.id}" ${a.id === curArrow ? 'selected' : ''}>${esc(IC.itemName(a.id))} (+${a.stats.aStr} strength${a.keep ? ', never used up' : pr == null ? '' : `, ${fmt.int(pr)} each`})</option>`; }).join('')}</select></label>` : ''}</div>
       <div class="cols">${list('xp', 'Top 10 by XP per hour', 'XP/hr')}${list('gold', 'Top 10 by gold per hour', 'Gold/hr')}</div>
-      <p class="muted small">Recalculated whenever you change a piece of gear. XP is total combat plus Health XP (5 per damage). Gold is market loot at the sell price chosen above${food && foodPrice != null ? `, less the cost of ${esc(IC.itemName(food.id))} eaten` : ''}. Click an enemy to load it above.${hidden ? ` ${hidden} enemies are hidden by the unticked boxes above.` : ''} It does not check whether you can survive the fight: watch the Food/hr column and the enemy's max hit.</p></div>`;
+      <p class="muted small">Recalculated whenever you change a piece of gear. XP is total combat plus Health XP (5 per damage). Gold is market loot at the sell price chosen above${food && foodPrice != null ? `, less the cost of ${esc(IC.itemName(food.id))} eaten` : ''}${withArrows ? ', less the arrows shot (one per shot, hit or miss, after your Ammo saver)' : ''}. Click an enemy to load it above.${hidden ? ` ${hidden} enemies are hidden by the unticked boxes above.` : ''} It does not check whether you can survive the fight: watch the Food/hr column and the enemy's max hit.</p></div>`;
   },
   foods() { return IC.data.game.items.filter((i) => i && i.heal > 0 && !i.dead).sort((a, b) => a.heal - b.heal); },
   foodHtml(r, m) {
@@ -334,9 +388,10 @@ IC.views.dps = {
     el.querySelector('#dGear').innerHTML = this.gearHtml(r);
 
     const out = el.querySelector('#dOut');
-    out.innerHTML = this.statsHtml(r, m, true) + this.boostsHtml(r) + this.foodHtml(r, m) + this.bestHtml();
+    out.innerHTML = this.statsHtml(r, m, true) + this.arrowHtml(r, m) + this.boostsHtml(r) + this.foodHtml(r, m) + this.bestHtml();
     out.onclick = (e) => {
-      const go = e.target.closest('[data-goto-mon]');
+      const go = e.target.closest('[data-goto-mon]'), arrow = e.target.closest('[data-arrow]');
+      if (arrow) { st.gear.ammunition = +arrow.dataset.arrow; this.draw(el); return; }
       if (go) { st.monster = go.dataset.gotoMon; IC.store.set('dpsMonster', st.monster); el.querySelector('#dMon').value = st.monster; this.draw(el); el.querySelector('#dMon').scrollIntoView({ behavior: 'smooth', block: 'center' }); }
       else if (e.target.closest('[data-lootinfo]')) IC.views.combat.lootDialog(m.key);
     };
@@ -344,6 +399,8 @@ IC.views.dps = {
     if (tMax) tMax.onchange = () => { st.topMax = tMax.value; this.draw(el); };
     out.querySelectorAll('[data-top]').forEach((b) => { b.onchange = () => { st[b.dataset.top] = b.checked; this.draw(el); }; });
     out.querySelectorAll('[data-boost]').forEach((c) => { c.onchange = () => { const b = IC.store.get('dpsBoosts', {}); b[c.dataset.boost] = c.checked; IC.store.set('dpsBoosts', b); this.draw(el); }; });
+    const topArrow = out.querySelector('#dTopArrow');
+    if (topArrow) topArrow.onchange = () => { st.gear.ammunition = +topArrow.value; this.draw(el); };
     const food = out.querySelector('#dFood');
     if (food) food.onchange = () => { IC.store.set('dpsFood', +food.value); this.draw(el); };
   },
